@@ -48,6 +48,22 @@ export interface InvoiceAmounts {
   dc_to_pay_paise: number;
 }
 
+export interface GstSplit {
+  cgst_paise: number;
+  sgst_paise: number;
+  igst_paise: number;
+}
+
+/** The same invoice with its GST attributed to each line, for storage, printing and GSTR-1. */
+export interface InvoiceDetail {
+  amounts: InvoiceAmounts;
+  /** Parallel to input.lines. Lines plus charges add up to the invoice GST exactly. */
+  lines: (GstSplit & { line_total_paise: number })[];
+  charges: GstSplit;
+  /** One entry per numeric GST rate, in order of first appearance. */
+  rates: (GstSplit & { tax_rate_percent: string; taxable_paise: number })[];
+}
+
 export class BillingMathError extends Error {
   override name = 'BillingMathError';
 }
@@ -139,7 +155,28 @@ function lineExtension(line: InvoiceLine, label: string): bigint {
   return roundHalfUp(quantity.n * rate, quantity.d);
 }
 
+/** Splits `total` by weight, largest remainder first, so the parts always add up to it. */
+function allocate(total: bigint, weights: bigint[]): bigint[] {
+  const sum = weights.reduce((acc, weight) => acc + weight, 0n);
+  if (sum === 0n) return weights.map(() => 0n);
+  const parts = weights.map((weight) => (total * weight) / sum);
+  const byRemainder = weights
+    .map((weight, index) => ({ index, remainder: (total * weight) % sum }))
+    .sort((a, b) => (a.remainder === b.remainder ? a.index - b.index : a.remainder > b.remainder ? -1 : 1));
+  let left = total - parts.reduce((acc, part) => acc + part, 0n);
+  for (const { index } of byRemainder) {
+    if (left === 0n) break;
+    parts[index] = (parts[index] ?? 0n) + 1n;
+    left -= 1n;
+  }
+  return parts;
+}
+
 export function calculateInvoice(input: InvoiceInput): InvoiceAmounts {
+  return calculateInvoiceDetail(input).amounts;
+}
+
+export function calculateInvoiceDetail(input: InvoiceInput): InvoiceDetail {
   if (input.bill_type !== 'supply' && input.bill_type !== 'job_work') fail('unknown bill type');
   if (typeof input.state_code !== 'string' || !/^\d{2}$/.test(input.state_code)) fail('state code must be two digits');
   if (input.freight_paid_by !== 'seller' && input.freight_paid_by !== 'buyer_to_pay') fail('unknown freight payer');
@@ -147,7 +184,8 @@ export function calculateInvoice(input: InvoiceInput): InvoiceAmounts {
   if (!Array.isArray(input.lines) || input.lines.length === 0) fail('an invoice needs at least one line');
 
   // Tax is rounded per numeric GST rate, so '18' and '18.00' must share a bucket.
-  const buckets = new Map<string, { rate: Fraction; base: bigint }>();
+  const buckets = new Map<string, { rate: Fraction; label: string; base: bigint; members: number[] }>();
+  const extensions: bigint[] = [];
   let subtotal = 0n;
   input.lines.forEach((line, index) => {
     const label = `line ${index + 1}`;
@@ -157,16 +195,25 @@ export function calculateInvoice(input: InvoiceInput): InvoiceAmounts {
     const divisor = gcd(rate.n, rate.d);
     const key = `${rate.n / divisor}/${rate.d / divisor}`;
     const bucket = buckets.get(key);
-    if (bucket) bucket.base += extension;
-    else buckets.set(key, { rate, base: extension });
+    if (bucket) {
+      bucket.base += extension;
+      bucket.members.push(index);
+    } else {
+      buckets.set(key, { rate, label: line.tax_rate_percent, base: extension, members: [index] });
+    }
+    extensions.push(extension);
     subtotal += extension;
   });
 
-  const charges =
-    parsePaise(input.packing_charge_paise, 'packing charge') + parsePaise(input.delivery_charge_paise, 'delivery charge');
+  const packing = parsePaise(input.packing_charge_paise, 'packing charge');
+  const delivery = parsePaise(input.delivery_charge_paise, 'delivery charge');
+  const charges = packing + delivery;
   const billedCharges = input.freight_paid_by === 'seller' ? charges : 0n;
   if (billedCharges > 0n) {
-    if (!input.delivery_taxable) fail('an untaxed seller charge must be billed as an explicitly classified line');
+    // Packing is always part of the value of supply (CGST s.15(2)(c)); the flag covers delivery.
+    if (delivery > 0n && !input.delivery_taxable) {
+      fail('untaxed delivery must be billed as an explicitly classified line');
+    }
     const [only, ...others] = buckets.values();
     if (only === undefined || others.length > 0) {
       fail('on a mixed-rate invoice, bill packing and delivery as explicitly classified lines');
@@ -176,16 +223,33 @@ export function calculateInvoice(input: InvoiceInput): InvoiceAmounts {
 
   let halfTax = 0n; // CGST, and equally SGST
   let igst = 0n;
-  for (const { rate, base } of buckets.values()) {
-    if (input.state_code === HOME_STATE) halfTax += roundHalfUp(base * rate.n, rate.d * 200n);
-    else igst += roundHalfUp(base * rate.n, rate.d * 100n);
+  const intraState = input.state_code === HOME_STATE;
+  const lineTax = extensions.map(() => 0n); // per head: the CGST half, or the IGST
+  let chargeTax = 0n;
+  const split = (head: bigint): GstSplit => ({
+    cgst_paise: intraState ? toSafeNumber(head, 'CGST') : 0,
+    sgst_paise: intraState ? toSafeNumber(head, 'SGST') : 0,
+    igst_paise: intraState ? 0 : toSafeNumber(head, 'IGST'),
+  });
+  const rates: InvoiceDetail['rates'] = [];
+  for (const { rate, label, base, members } of buckets.values()) {
+    const head = roundHalfUp(base * rate.n, rate.d * (intraState ? 200n : 100n));
+    if (intraState) halfTax += head;
+    else igst += head;
+    // billedCharges is only ever non-zero when there is a single bucket.
+    const parts = allocate(head, [...members.map((i) => extensions[i] ?? 0n), billedCharges]);
+    members.forEach((i, at) => {
+      lineTax[i] = parts[at] ?? 0n;
+    });
+    chargeTax += parts[members.length] ?? 0n;
+    rates.push({ tax_rate_percent: label, taxable_paise: toSafeNumber(base, 'taxable value'), ...split(head) });
   }
 
   const taxable = subtotal + billedCharges;
   const exactTotal = taxable + 2n * halfTax + igst;
   const grandTotal = roundHalfUp(exactTotal, 100n) * 100n;
 
-  return {
+  const amounts: InvoiceAmounts = {
     subtotal_paise: toSafeNumber(subtotal, 'subtotal'),
     taxable_value_paise: toSafeNumber(taxable, 'taxable value'),
     cgst_paise: toSafeNumber(halfTax, 'CGST'),
@@ -194,5 +258,103 @@ export function calculateInvoice(input: InvoiceInput): InvoiceAmounts {
     round_off_paise: toSafeNumber(grandTotal - exactTotal, 'round-off'),
     grand_total_paise: toSafeNumber(grandTotal, 'grand total'),
     dc_to_pay_paise: toSafeNumber(input.freight_paid_by === 'buyer_to_pay' ? charges : 0n, 'DC to-pay amount'),
+  };
+  return {
+    amounts,
+    lines: extensions.map((extension, i) => ({
+      line_total_paise: toSafeNumber(extension, 'line total'),
+      ...split(lineTax[i] ?? 0n),
+    })),
+    charges: split(chargeTax),
+    rates,
+  };
+}
+
+// ---- Summaries of issued figures (no new tax is computed) ---------------------
+
+export interface IssuedLine extends GstSplit {
+  tax_rate_percent: string;
+  line_total_paise: number;
+}
+
+export interface RateSummary extends GstSplit {
+  /** Canonical rate, e.g. '18' or '2.5'. */
+  tax_rate_percent: string;
+  taxable_paise: number;
+}
+
+/**
+ * Groups an issued invoice by GST rate for the tax table. Header charges exist only on a
+ * single-rate bill, so they join its one bucket.
+ */
+export function summarizeRates(
+  lines: readonly IssuedLine[],
+  charges: GstSplit & { taxable_paise: number },
+): { rates: RateSummary[]; taxable_paise: number } {
+  const rates = new Map<string, RateSummary>();
+  const add = (rate: string, part: GstSplit, taxable: number): void => {
+    const row = rates.get(rate) ?? { tax_rate_percent: rate, taxable_paise: 0, cgst_paise: 0, sgst_paise: 0, igst_paise: 0 };
+    row.taxable_paise += taxable;
+    row.cgst_paise += part.cgst_paise;
+    row.sgst_paise += part.sgst_paise;
+    row.igst_paise += part.igst_paise;
+    rates.set(rate, row);
+  };
+  for (const line of lines) {
+    const rate = parseDecimal(line.tax_rate_percent, 'GST rate');
+    const [whole = '0', decimals = ''] = line.tax_rate_percent.split('.');
+    const kept = decimals.replace(/0+$/, '');
+    add(rate.n === 0n ? '0' : kept ? `${whole}.${kept}` : whole, line, line.line_total_paise);
+  }
+  if (charges.taxable_paise > 0) {
+    const [only] = rates.keys();
+    if (only === undefined || rates.size > 1) fail('header charges need a single GST rate');
+    add(only, charges, charges.taxable_paise);
+  }
+  const rows = [...rates.values()];
+  return { rates: rows, taxable_paise: rows.reduce((sum, row) => sum + row.taxable_paise, 0) };
+}
+
+export function outstandingPaise(grandTotalPaise: number, amountPaidPaise: number): number {
+  return grandTotalPaise - amountPaidPaise;
+}
+
+export function sumPaise(values: readonly number[]): number {
+  return toSafeNumber(values.reduce((sum, value) => sum + BigInt(value), 0n), 'sum');
+}
+
+/** Adds kg strings exactly, to three decimals. */
+export function sumKg(values: readonly string[]): string {
+  const grams = values.reduce((sum, value) => {
+    const parsed = parseDecimal(value, 'weight');
+    return sum + roundHalfUp(parsed.n * 1000n, parsed.d);
+  }, 0n);
+  return `${grams / 1000n}.${(grams % 1000n).toString().padStart(3, '0')}`;
+}
+
+export interface LotBalance {
+  /** Signed kg, three decimals: negative when more went back than came in. */
+  balance_kg: string;
+  /** Within 1% of inward either way, so the lot closes without a reason. */
+  within_tolerance: boolean;
+  /** Over-returned by more than 1%: the database refuses it. */
+  over_returned: boolean;
+}
+
+/** What stays in the customer's lot after a return and its scrap are posted. */
+export function lotBalance(lot: { inward: string; outward: string; scrap: string }, returned: string, scrap: string): LotBalance {
+  const grams = (value: string, label: string): bigint => {
+    const parsed = parseDecimal(value, label);
+    return roundHalfUp(parsed.n * 1000n, parsed.d);
+  };
+  const inward = grams(lot.inward, 'inward weight');
+  const left =
+    inward - grams(lot.outward, 'outward weight') - grams(lot.scrap, 'scrap weight') - grams(returned, 'returned weight') - grams(scrap, 'scrap now');
+  const size = left < 0n ? -left : left;
+  const within = size * 100n <= inward;
+  return {
+    balance_kg: `${left < 0n ? '-' : ''}${size / 1000n}.${(size % 1000n).toString().padStart(3, '0')}`,
+    within_tolerance: within,
+    over_returned: left < 0n && !within,
   };
 }

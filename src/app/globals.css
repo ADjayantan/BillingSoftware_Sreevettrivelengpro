@@ -1,30 +1,87 @@
 @import 'tailwindcss';
 
 :root {
-  --background: #ffffff;
-  --foreground: #111827;
+  color-scheme: light dark;
+  --paper: #f5f6f4;
+  --card: #ffffff;
+  --ink: #15202b;
+  --muted: #52606d;
+  --line: #cfd6dc;
+  --accent: #0b5d51;
+  --accent-ink: #ffffff;
+  --warn: #9a3412;
+  --warn-bg: #fff4e5;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0b1220;
-    --foreground: #f3f4f6;
+    --paper: #0f1620;
+    --card: #18212d;
+    --ink: #eef2f6;
+    --muted: #a6b3c0;
+    --line: #33404e;
+    --accent: #4fc3ae;
+    --accent-ink: #06231e;
+    --warn: #fdba74;
+    --warn-bg: #3a2413;
   }
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans Tamil', sans-serif;
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Nirmala UI', 'Noto Sans Tamil', sans-serif;
 }
 
 /* Large type everywhere: rem units scale from here. System fonts only, no download. */
 html {
   font-size: 18px;
+  /* Keeps the focused field clear of the fixed total bar on the billing screen. */
+  scroll-padding-block: 1rem 7rem;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--paper);
+  color: var(--ink);
   font-family: var(--font-sans);
+}
+
+@layer components {
+  .field {
+    @apply w-full min-h-12 rounded-md border border-line bg-card px-3 py-2 text-base text-ink;
+  }
+  .field:focus-visible,
+  .btn:focus-visible,
+  a:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .btn {
+    @apply inline-flex min-h-12 cursor-pointer items-center justify-center rounded-md border border-line bg-card px-4 py-2 text-base font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply border-accent bg-accent text-accent-ink;
+  }
+  .card {
+    @apply rounded-lg border border-line bg-card p-4;
+  }
+  .grid-table {
+    @apply w-full text-left;
+  }
+  .grid-table th {
+    @apply border-b border-line px-2 py-2 text-sm font-semibold text-muted;
+  }
+  .grid-table td {
+    @apply border-b border-line px-2 py-2 align-top;
+  }
+  .num {
+    @apply text-right tabular-nums;
+  }
 }

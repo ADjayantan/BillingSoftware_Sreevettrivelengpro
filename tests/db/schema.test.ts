@@ -12,6 +12,7 @@ import {
   openSeries,
   pgError,
   queryAs,
+  recordPayment,
   seedMasterData,
   setToday,
   syncInvoice,
@@ -20,14 +21,18 @@ import {
   type SyncResult,
 } from './harness';
 
-const CORE_TABLES = [
+/** The brief's 8 core tables plus the 3 that Sprint 2's approved decisions need. */
+const PUBLIC_TABLES = [
   'alert_rules',
+  'company_profile',
   'customers',
   'deliveries',
   'invoice_items',
   'invoices',
   'job_work_ledger',
+  'job_work_returns',
   'metal_rates',
+  'payments',
   'stud_items',
 ] as const;
 
@@ -54,13 +59,13 @@ describe('migration', () => {
     expect(rows[0]?.version).toMatch(/PostgreSQL (1[5-9]|[2-9]\d)\./);
   });
 
-  it('creates exactly the 8 core tables in public, all with RLS enabled', async () => {
+  it('creates exactly the 8 core and 3 Sprint 2 tables in public, all with RLS enabled', async () => {
     const { rows } = await ctx.db.query<{ relname: string; rls: boolean }>(`
       select c.relname, c.relrowsecurity as rls
       from pg_class c join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and c.relkind = 'r'
       order by c.relname`);
-    expect(rows.map((r) => r.relname)).toEqual([...CORE_TABLES]);
+    expect(rows.map((r) => r.relname)).toEqual([...PUBLIC_TABLES]);
     expect(rows.filter((r) => !r.rls)).toEqual([]);
   });
 
@@ -124,7 +129,9 @@ describe('migration', () => {
     expect(rows.filter((r) => r.role === 'service_role').map((r) => r.fn)).toEqual(helpers);
     expect(rows.filter((r) => r.role === 'authenticated').map((r) => r.fn)).toEqual([
       ...helpers,
+      'public.record_payment',
       'public.sync_invoice',
+      'public.void_payment',
     ]);
   });
 
@@ -644,14 +651,14 @@ describe('row level security', () => {
     expect(await queryAs(ctx.db, ACTORS.staff, 'select id from public.customers')).toHaveLength(2);
     expect(await queryAs(ctx.db, ACTORS.owner, 'select id from public.invoices')).toHaveLength(1);
     for (const actor of [ACTORS.stranger, ACTORS.former]) {
-      for (const table of CORE_TABLES) {
+      for (const table of PUBLIC_TABLES) {
         expect(await queryAs(ctx.db, actor, `select 1 from public.${table}`)).toEqual([]);
       }
     }
   });
 
   it('denies anon outright', async () => {
-    for (const table of CORE_TABLES) {
+    for (const table of PUBLIC_TABLES) {
       expect((await pgError(queryAs(ctx.db, ACTORS.anon, `select 1 from public.${table}`))).code).toBe('42501');
     }
   });
@@ -691,15 +698,18 @@ describe('row level security', () => {
     }
   });
 
-  it('lets staff record a part payment', async () => {
-    const [row] = await queryAs(
+  it('lets staff record a part payment, but only through record_payment', async () => {
+    const direct = queryAs(
       ctx.db,
       ACTORS.staff,
-      `update public.invoices set amount_paid = 1000, payment_status = 'partial'
-        where id = $1 returning payment_status, amount_paid::text`,
+      `update public.invoices set amount_paid = 1000, payment_status = 'partial' where id = $1`,
       [invoice.invoice_id],
     );
-    expect(row).toEqual({ payment_status: 'partial', amount_paid: '1000.00' });
+    expect((await pgError(direct)).code).toBe('23514');
+    expect(await recordPayment(ctx.db, ACTORS.staff, invoice.invoice_id, '1000.00')).toMatchObject({
+      payment_status: 'partial',
+      amount_paid: '1000.00',
+    });
   });
 
   it('reserves master-data deletion for the owner, and never for billed customers', async () => {
@@ -830,14 +840,14 @@ describe('issued-invoice guard', () => {
        where table_schema = 'public' and table_name = 'invoices' order by ordinal_position`);
     const other: Record<string, string> = {
       uuid: `'11111111-1111-4111-8111-111111111111'`, text: `'changed'`, integer: '77', date: `date '2026-11-01'`,
-      jsonb: `'{"name":"Forged"}'`, numeric: '0.01', boolean: 'false', 'USER-DEFINED': `'job_work'`,
+      jsonb: `'{"name":"Forged"}'`, numeric: '0.01', 'USER-DEFINED': `'job_work'`,
       'timestamp with time zone': `'2020-01-01'`,
     };
     const frozen = rows.filter((r) => !editable.includes(r.col));
     expect(frozen.length).toBe(rows.length - editable.length);
     for (const { col, type } of frozen) {
       for (const actor of [ACTORS.staff, ACTORS.owner, ACTORS.sqlEditor]) {
-        const err = await pgError(set(`${col} = ${other[type]}`, actor));
+        const err = await pgError(set(`${col} = ${type === 'boolean' ? `not ${col}` : other[type]}`, actor));
         expect(err, `${actor.role}: ${col}`).toMatchObject({ code: '23514', message: expect.stringMatching(/is issued and cannot be edited/) });
       }
     }
@@ -847,7 +857,10 @@ describe('issued-invoice guard', () => {
   });
 
   it('still allows payment tracking, the archive URL and cancellation', async () => {
-    expect(await set(`amount_paid = 1000, payment_status = 'partial'`)).toHaveLength(1);
+    const paid = await recordPayment(ctx.db, ACTORS.staff, id, '1000.00');
+    const whilePaid = set(`cancelled_at = now(), cancellation_reason = 'Order cancelled'`);
+    expect((await pgError(whilePaid)).message).toMatch(/void them before cancelling/);
+    await queryAs(ctx.db, ACTORS.owner, `select public.void_payment($1, 'Bill cancelled')`, [paid.payment_id]);
     expect(await set(`pdf_drive_url = 'https://drive.google.com/file/d/1Abc/view'`)).toHaveLength(1);
     expect(await set(`cancelled_at = '2020-01-01', cancellation_reason = 'Order cancelled'`)).toHaveLength(1);
     const { rows } = await ctx.db.query(`select cancelled_at > now() - interval '1 hour' as server_dated from public.invoices where id = $1`, [id]);

@@ -13,8 +13,10 @@ import {
   pgError,
   plannedCount,
   queryAs,
+  recordPayment,
   seedMasterData,
   syncInvoice,
+  type Line,
   type MasterData,
   type Payload,
 } from './harness';
@@ -38,14 +40,22 @@ describe('NaN never enters a numeric column', () => {
 
   // Catalog-driven on purpose: a numeric column added later without an upper bound fails here.
   it('is refused by every stored numeric column in public', async () => {
-    await syncInvoice(ctx.db, ACTORS.staff, intraStatePayload(ctx.md));
-    await queryAs(
+    const [lot] = await queryAs<{ id: string }>(
       ctx.db,
       ACTORS.staff,
       `insert into public.job_work_ledger (customer_id, party_dc_no, party_dc_date, material_grade, inward_weight_kg)
-       values ($1, 'PDC-1', '2026-11-02', 'EN8', 100)`,
+       values ($1, 'PDC-1', '2026-11-02', 'EN8', 100) returning id`,
       [ctx.md.tnCustomerId],
     );
+    const bill = await syncInvoice(
+      ctx.db,
+      ACTORS.staff,
+      intraStatePayload(ctx.md, {
+        bill_type: 'job_work',
+        job_work_returns: [{ lot_id: lot!.id, returned_weight_kg: '10', scrap_weight_kg: '1', declared_value: '500.00' }],
+      }),
+    );
+    await recordPayment(ctx.db, ACTORS.staff, bill.invoice_id, '100.00');
     await queryAs(ctx.db, ACTORS.staff, `insert into public.metal_rates (material_grade, rate_per_kg) values ('EN8', 85)`);
     await queryAs(
       ctx.db,
@@ -183,7 +193,7 @@ describe('GST records are permanent', () => {
       'delete from public.invoice_items',
       'update public.invoice_items set line_total = 1',
       'truncate public.invoices cascade',
-      'truncate public.deliveries',
+      'truncate public.deliveries cascade',
       'truncate public.invoice_items',
     ];
     for (const actor of [ACTORS.staff, ACTORS.owner, ACTORS.service, ACTORS.sqlEditor]) {
@@ -196,14 +206,9 @@ describe('GST records are permanent', () => {
 
   it('logs every edit and deletion with who did it (CGST Rule 56(8)), append-only', async () => {
     const bill = await syncInvoice(ctx.db, ACTORS.staff, intraStatePayload(ctx.md));
-    const pay = (amount: string) =>
-      queryAs(ctx.db, ACTORS.staff, `update public.invoices set amount_paid = $2, payment_status = 'partial' where id = $1`, [
-        bill.invoice_id,
-        amount,
-      ]);
-    await pay('1234.56');
-    await pay('1000.00'); // correcting a typo must not erase the first entry
-    await pay('1000.00'); // no change: nothing to log
+    const wrong = await recordPayment(ctx.db, ACTORS.staff, bill.invoice_id, '1234.56');
+    await queryAs(ctx.db, ACTORS.owner, `select public.void_payment($1, 'Typed the wrong amount')`, [wrong.payment_id]);
+    await recordPayment(ctx.db, ACTORS.staff, bill.invoice_id, '1000.00'); // the first entry stays on record
 
     const log = await queryAs(
       ctx.db,
@@ -214,7 +219,18 @@ describe('GST records are permanent', () => {
     );
     expect(log).toEqual([
       { actor_id: USERS.staff.id, actor_role: 'authenticated', action: 'UPDATE', was: '0.00', now: '1234.56' },
-      { actor_id: USERS.staff.id, actor_role: 'authenticated', action: 'UPDATE', was: '1234.56', now: '1000.00' },
+      { actor_id: USERS.owner.id, actor_role: 'authenticated', action: 'UPDATE', was: '1234.56', now: '0.00' },
+      { actor_id: USERS.staff.id, actor_role: 'authenticated', action: 'UPDATE', was: '0.00', now: '1000.00' },
+    ]);
+    const receipts = await queryAs(
+      ctx.db,
+      ACTORS.staff,
+      'select amount::text, void_reason from public.payments where invoice_id = $1 order by created_at',
+      [bill.invoice_id],
+    );
+    expect(receipts).toEqual([
+      { amount: '1234.56', void_reason: 'Typed the wrong amount' },
+      { amount: '1000.00', void_reason: null },
     ]);
 
     const { rows } = await ctx.db.query<{ id: string }>(`insert into public.customers (name) values ('Spare') returning id`);
@@ -236,12 +252,15 @@ describe('GST records are permanent', () => {
        where t.tgfoid = 'private.log_change()'::regprocedure order by 1`);
     expect(rows.map((r) => r.tbl)).toEqual([
       'private.app_users',
+      'public.company_profile',
       'public.customers',
       'public.deliveries',
       'public.invoice_items',
       'public.invoices',
       'public.job_work_ledger',
+      'public.job_work_returns',
       'public.metal_rates',
+      'public.payments',
       'public.stud_items',
     ]);
   });
@@ -285,7 +304,7 @@ describe('GST records are permanent', () => {
   it('keeps payment status consistent with what was received', async () => {
     const bill = await syncInvoice(ctx.db, ACTORS.staff, intraStatePayload(ctx.md));
     const set = (amount: string, status: string) =>
-      outcome(queryAs(ctx.db, ACTORS.staff, `update public.invoices set amount_paid = $2, payment_status = $3 where id = $1`, [bill.invoice_id, amount, status]));
+      outcome(queryAs(ctx.db, ACTORS.sqlEditor, `update public.invoices set amount_paid = $2, payment_status = $3 where id = $1`, [bill.invoice_id, amount, status]));
     expect(await set('5000.00', 'partial')).toMatch(/^rejected 23514/);
     expect(await set('100.00', 'unpaid')).toMatch(/^rejected 23514/);
     expect(await set('1740.00', 'paid')).toMatch(/^accepted/); // 2% TDS deducted by the buyer
@@ -324,7 +343,7 @@ describe('the cron / admin key (service_role) works on every Supabase project, w
     const bill = await syncInvoice(db, ACTORS.staff, intraStatePayload(md));
     const run = (sql: string, params: unknown[] = []) => outcome(queryAs(db, ACTORS.service, sql, params));
 
-    for (const table of ['customers', 'stud_items', 'metal_rates', 'invoices', 'invoice_items', 'deliveries', 'job_work_ledger', 'alert_rules', 'latest_metal_rates']) {
+    for (const table of ['customers', 'stud_items', 'metal_rates', 'invoices', 'invoice_items', 'deliveries', 'job_work_ledger', 'job_work_returns', 'payments', 'company_profile', 'alert_rules', 'latest_metal_rates']) {
       expect(await run(`select * from public.${table}`), table).toMatch(/^accepted/);
     }
     expect(await run(`insert into public.metal_rates (material_grade, rate_per_kg, source) values ('EN8', 86.25, 'cron')`)).toMatch(/^accepted/);
@@ -437,11 +456,223 @@ describe('metal-rate history stays true, whoever writes it', () => {
   });
 });
 
-describe('known gaps, scheduled for Sprint 2 with the owner', () => {
-  it.todo('SEZ / export supplies: IGST for a Tamil Nadu SEZ unit (IGST Act s.7(5)(b))');
-  it.todo('packing charged outside the taxable value (CGST s.15(2)(c) vs the brief)');
-  it.todo('supplier name, GSTIN and address frozen on each invoice (Rule 46(a))');
-  it.todo('GST stored per line, for rate-wise printing and GSTR-1');
-  it.todo('job-work bills linked to the party-DC lots they return (ITC-04), with a closing rule');
-  it.todo('receipts through an atomic RPC, so two devices cannot overwrite each other');
+describe('Sprint 2 decisions approved by the owner', () => {
+  const ctx = useDb();
+  const sync = (payload: Payload) => outcome(syncInvoice(ctx.db, ACTORS.staff, payload));
+
+  const openLot = async (partyDcNo: string, kg = '500.000', customerId = ctx.md.tnCustomerId): Promise<string> =>
+    (
+      await queryAs<{ id: string }>(
+        ctx.db,
+        ACTORS.staff,
+        `insert into public.job_work_ledger (customer_id, party_dc_no, party_dc_date, material_grade, inward_weight_kg)
+         values ($1, $2, '2026-11-02', 'EN8', $3) returning id`,
+        [customerId, partyDcNo, kg],
+      )
+    )[0]!.id;
+  const lotState = async (id: string) =>
+    (
+      await queryAs<{ outward: string; scrap: string; balance: string; status: string }>(
+        ctx.db,
+        ACTORS.staff,
+        `select outward_weight_kg::text as outward, scrap_weight_kg::text as scrap, balance_weight_kg::text as balance, status
+           from public.job_work_ledger where id = $1`,
+        [id],
+      )
+    )[0];
+  const jobWork = (returns: Payload[], overrides: Payload = {}) =>
+    intraStatePayload(ctx.md, { bill_type: 'job_work', job_work_returns: returns, ...overrides });
+
+  it('SEZ / export supplies: IGST for a Tamil Nadu SEZ unit (IGST Act s.7(5)(b))', async () => {
+    const { rows } = await ctx.db.query<{ id: string }>(`
+      insert into public.customers (name, gstin, state_code, address, is_sez)
+      values ('Precision Auto (SEZ Unit)', '33AAKCP4321K1ZF', '33', 'Mahindra World City SEZ, Chengalpattu', true) returning id`);
+    const sez = { customer_id: rows[0]!.id, due_date: '2026-12-31' };
+    expect(await sync(intraStatePayload(ctx.md, { ...sez, cgst: '0.00', sgst: '0.00', igst: '270.00' }))).toMatch(/^accepted/);
+    expect(await sync(intraStatePayload(ctx.md, sez))).toMatch(/^rejected 23514/); // CGST + SGST
+    expect(await sync(intraStatePayload(ctx.md, { cgst: '0.00', sgst: '0.00', igst: '270.00' }))).toMatch(/^rejected 23514/); // ordinary TN
+    const [bill] = await queryAs(
+      ctx.db,
+      ACTORS.staff,
+      'select place_of_supply, is_sez, igst::text from public.invoices where customer_id = $1',
+      [sez.customer_id],
+    );
+    expect(bill).toEqual({ place_of_supply: '33', is_sez: true, igst: '270.00' });
+
+    // A later change of status must not re-tax an issued bill.
+    await queryAs(ctx.db, ACTORS.staff, 'update public.customers set is_sez = false where id = $1', [sez.customer_id]);
+    const [same] = await queryAs(ctx.db, ACTORS.staff, 'select is_sez from public.invoices where customer_id = $1', [sez.customer_id]);
+    expect(same).toEqual({ is_sez: true });
+  });
+
+  it('packing charged outside the taxable value (CGST s.15(2)(c) vs the brief)', async () => {
+    const untaxedPacking = { packing_charge: '100.00', delivery_taxable: false, grand_total: '1870.00' };
+    expect(await sync(intraStatePayload(ctx.md, untaxedPacking))).toMatch(/^rejected 23514/);
+    const taxedPacking = { packing_charge: '100.00', delivery_taxable: false, cgst: '144.00', sgst: '144.00', grand_total: '1888.00' };
+    expect(await sync(intraStatePayload(ctx.md, taxedPacking))).toMatch(/^accepted/);
+    const untaxedDelivery = { delivery_charge: '200.00', delivery_taxable: false, grand_total: '1970.00' };
+    expect(await sync(intraStatePayload(ctx.md, untaxedDelivery))).toMatch(/^accepted/);
+  });
+
+  it('supplier name, GSTIN and address frozen on each invoice (Rule 46(a))', async () => {
+    const bill = await syncInvoice(ctx.db, ACTORS.staff, intraStatePayload(ctx.md));
+    const change = `update public.company_profile set legal_name = 'Renamed Works', address = 'New address' returning id`;
+    expect(await queryAs(ctx.db, ACTORS.staff, change)).toEqual([]); // owner only
+    expect(await queryAs(ctx.db, ACTORS.owner, change)).toHaveLength(1);
+    const snapshot = async (id: string) =>
+      (await queryAs(ctx.db, ACTORS.staff, 'select supplier_snapshot as s from public.invoices where id = $1', [id]))[0]!.s;
+    expect(await snapshot(bill.invoice_id)).toMatchObject({
+      legal_name: 'Demo Stud Works', gstin: '33AAECS2468R1ZS', address: '1 Test Road, Coimbatore 641001', bank_ifsc: 'DEMO0000001',
+    });
+    const next = await syncInvoice(ctx.db, ACTORS.staff, intraStatePayload(ctx.md));
+    expect(await snapshot(next.invoice_id)).toMatchObject({ legal_name: 'Renamed Works' });
+
+    const second = `insert into public.company_profile (legal_name, gstin, address) values ('Two', '33ABCPV1357D1ZX', 'X')`;
+    expect((await pgError(queryAs(ctx.db, ACTORS.owner, second))).code).toBe('23505');
+    const fresh = await createTestDb();
+    try {
+      await fresh.exec(`insert into public.customers (id, name) values ('11111111-1111-4111-8111-111111111111', 'C')`);
+      const payload = intraStatePayload(ctx.md, { customer_id: '11111111-1111-4111-8111-111111111111', items: [goodsLine(ctx.md, { stud_item_id: null })] });
+      const err = await pgError(syncInvoice(fresh, ACTORS.staff, payload));
+      expect(err).toMatchObject({ code: '55000', message: expect.stringMatching(/company profile/) });
+    } finally {
+      await fresh.close();
+    }
+  });
+
+  it('GST stored per line, for rate-wise printing and GSTR-1', async () => {
+    const items = [
+      goodsLine(ctx.md),
+      goodsLine(ctx.md, { line_no: 2, qty_pieces: 200, unit_rate: '5', line_total: '1000.00', tax_rate_percent: '5.00' }),
+    ];
+    const mixed = intraStatePayload(ctx.md, { subtotal: '2500.00', cgst: '160.00', sgst: '160.00', grand_total: '2820.00', items });
+    const bill = await syncInvoice(ctx.db, ACTORS.staff, mixed);
+    const byRate = await queryAs(
+      ctx.db,
+      ACTORS.staff,
+      `select tax_rate_percent::text as rate, sum(line_total)::text as taxable, sum(cgst_amount)::text as cgst, sum(sgst_amount)::text as sgst
+         from public.invoice_items where invoice_id = $1 group by tax_rate_percent order by tax_rate_percent`,
+      [bill.invoice_id],
+    );
+    expect(byRate).toEqual([
+      { rate: '5.00', taxable: '1000.00', cgst: '25.00', sgst: '25.00' },
+      { rate: '18.00', taxable: '1500.00', cgst: '135.00', sgst: '135.00' },
+    ]);
+
+    const forge = (first: Line, second: Line) =>
+      sync({ ...intraStatePayload(ctx.md, { subtotal: '2500.00', cgst: '160.00', sgst: '160.00', grand_total: '2820.00', items }),
+        items: [{ ...items[0], igst_amount: '0.00', ...first }, { ...items[1], igst_amount: '0.00', ...second }] });
+    const pair = (amount: string) => ({ cgst_amount: amount, sgst_amount: amount });
+    expect(await forge(pair('135.00'), pair('25.00'))).toMatch(/^accepted/);
+    expect(await forge(pair('135.00'), pair('24.00'))).toMatch(/^rejected 23514.*does not add up/); // lost a rupee
+    expect(await forge(pair('25.00'), pair('135.00'))).toMatch(/^rejected 23514.*does not match its rate/); // swapped
+    expect(await forge({ cgst_amount: '136.00', sgst_amount: '134.00' }, { cgst_amount: '24.00', sgst_amount: '26.00' })).toMatch(/^rejected 23514/);
+    expect(await forge({}, pair('25.00'))).toMatch(/^rejected 22023/); // missing
+  });
+
+  it('job-work bills linked to the party-DC lots they return (ITC-04), with a closing rule', async () => {
+    const lot = await openLot('PDC-2201');
+    const part = jobWork([{ lot_id: lot, returned_weight_kg: '300.250', scrap_weight_kg: '12.500', pieces: 2400, goods_hsn: '731815' }]);
+    const bill = await syncInvoice(ctx.db, ACTORS.staff, part);
+    expect(await lotState(lot)).toEqual({ outward: '300.250', scrap: '12.500', balance: '187.250', status: 'open' });
+    // Challan-wise trail: the DC, the lot and the balance as issued.
+    const trail = await queryAs(
+      ctx.db,
+      ACTORS.staff,
+      `select d.dc_no, r.party_dc_no, r.party_dc_date::text as dated, r.returned_weight_kg::text as kg, r.balance_after_kg::text as balance, r.pieces
+         from public.job_work_returns r join public.deliveries d on d.id = r.delivery_id where r.ledger_id = $1`,
+      [lot],
+    );
+    expect(trail).toEqual([{ dc_no: bill.dc_no, party_dc_no: 'PDC-2201', dated: '2026-11-02', kg: '300.250', balance: '187.250', pieces: 2400 }]);
+    // A retry must not move the weight twice.
+    expect((await syncInvoice(ctx.db, ACTORS.staff, part)).replayed).toBe(true);
+    expect((await lotState(lot))?.outward).toBe('300.250');
+
+    // Issued returns cannot be rewound, nor the lot re-labelled.
+    for (const change of ['outward_weight_kg = 100', 'scrap_weight_kg = 0', `party_dc_no = 'X'`, `material_grade = 'EN19'`]) {
+      expect((await pgError(queryAs(ctx.db, ACTORS.owner, `update public.job_work_ledger set ${change} where id = $1`, [lot]))).code).toBe('23514');
+    }
+
+    // Closing: within 1% of inward, or with a reason.
+    const close = (reason: string | null) =>
+      outcome(queryAs(ctx.db, ACTORS.staff, `update public.job_work_ledger set status = 'closed', close_reason = $2 where id = $1 returning status`, [lot, reason]));
+    expect(await close(null)).toMatch(/^rejected 23514.*close_rule/);
+    expect(await sync(jobWork([{ lot_id: lot, returned_weight_kg: '100', close: true }]))).toMatch(/^rejected 23514.*close_rule/);
+    expect((await lotState(lot))?.outward).toBe('300.250');
+    expect(await sync(jobWork([{ lot_id: lot, returned_weight_kg: '182.250', close: true }]))).toMatch(/^accepted/); // 5.000 kg left = exactly 1%
+    expect(await lotState(lot)).toMatchObject({ balance: '5.000', status: 'closed' });
+    expect(await sync(jobWork([{ lot_id: lot, returned_weight_kg: '1' }]))).toMatch(/^rejected 23514.*is closed/);
+
+    const short = await openLot('PDC-2202');
+    expect(await sync(jobWork([{ lot_id: short, returned_weight_kg: '100', close: true, close_reason: 'Party took back the rest' }]))).toMatch(/^accepted/);
+    // Over-return beyond scale variance (a typed extra zero) is refused.
+    const over = await openLot('PDC-2203');
+    expect(await sync(jobWork([{ lot_id: over, returned_weight_kg: '505.001' }]))).toMatch(/^rejected 23514.*more than was received/);
+    expect(await sync(jobWork([{ lot_id: over, returned_weight_kg: '505.000' }]))).toMatch(/^accepted/);
+    // Wrong party, wrong bill type.
+    const other = await openLot('PDC-2204', '500.000', ctx.md.kaCustomerId);
+    expect(await sync(jobWork([{ lot_id: other, returned_weight_kg: '1' }]))).toMatch(/^rejected 23503/);
+    expect(await sync(jobWork([{ lot_id: other, returned_weight_kg: '1' }], { bill_type: 'supply' }))).toMatch(/^rejected 23514/);
+  });
+
+  it('cancelling a job-work bill gives the weight back to its lot and reopens it', async () => {
+    const lot = await openLot('PDC-2301', '100.000');
+    const bill = await syncInvoice(ctx.db, ACTORS.staff, jobWork([{ lot_id: lot, returned_weight_kg: '98.000', scrap_weight_kg: '2.000', close: true }]));
+    expect(await lotState(lot)).toMatchObject({ balance: '0.000', status: 'closed' });
+    await queryAs(ctx.db, ACTORS.staff, `update public.invoices set cancelled_at = now(), cancellation_reason = 'Wrong weight typed' where id = $1`, [bill.invoice_id]);
+    expect(await lotState(lot)).toEqual({ outward: '0.000', scrap: '0.000', balance: '100.000', status: 'open' });
+    expect(await sync(jobWork([{ lot_id: lot, returned_weight_kg: '97.000', scrap_weight_kg: '3.000', close: true }]))).toMatch(/^accepted/);
+    const rows = await queryAs(
+      ctx.db,
+      ACTORS.staff,
+      'select returned_weight_kg::text as kg, reversed_at is not null as reversed from public.job_work_returns where ledger_id = $1 order by created_at',
+      [lot],
+    );
+    expect(rows).toEqual([{ kg: '98.000', reversed: true }, { kg: '97.000', reversed: false }]);
+  });
+
+  it('receipts through an atomic RPC, so two devices cannot overwrite each other', async () => {
+    const bill = (await syncInvoice(ctx.db, ACTORS.staff, intraStatePayload(ctx.md))).invoice_id; // Rs 1,770
+    const direct = queryAs(ctx.db, ACTORS.staff, `update public.invoices set amount_paid = 500, payment_status = 'partial' where id = $1`, [bill]);
+    expect((await pgError(direct)).message).toMatch(/record_payment/);
+
+    await recordPayment(ctx.db, ACTORS.staff, bill, '1000.00');
+    const id = '22222222-2222-4222-8222-222222222222';
+    expect(await recordPayment(ctx.db, ACTORS.owner, bill, '500.00', { client_receipt_id: id })).toMatchObject({ amount_paid: '1500.00', replayed: false });
+    // A retry after a lost response posts nothing new; a changed one is refused.
+    expect(await recordPayment(ctx.db, ACTORS.owner, bill, '500.00', { client_receipt_id: id })).toMatchObject({ amount_paid: '1500.00', replayed: true });
+    expect((await pgError(recordPayment(ctx.db, ACTORS.owner, bill, '600.00', { client_receipt_id: id }))).code).toBe('23505');
+
+    for (const [amount, change, code] of [
+      ['270.01', {}, '23514'], // more than is due
+      ['0', {}, '23514'],
+      ['-5', {}, '23514'],
+      ['NaN', {}, '23514'],
+      ['1.005', {}, '22023'],
+      ['1.00', { received_on: '2026-11-24' }, '22023'], // future
+      ['1.00', { mode: 'barter' }, '22P02'],
+    ] as const) {
+      expect((await pgError(recordPayment(ctx.db, ACTORS.staff, bill, amount, change))).code, amount).toBe(code);
+    }
+    for (const actor of [ACTORS.stranger, ACTORS.former, ACTORS.service, ACTORS.anon]) {
+      expect((await pgError(recordPayment(ctx.db, actor, bill, '1.00'))).code).toBe('42501');
+    }
+
+    const last = await recordPayment(ctx.db, ACTORS.staff, bill, '270.00');
+    expect(last).toMatchObject({ amount_paid: '1770.00', payment_status: 'paid' });
+    expect((await pgError(queryAs(ctx.db, ACTORS.staff, `select public.void_payment($1, 'Cheque bounced')`, [last.payment_id]))).code).toBe('42501');
+    const [voided] = await queryAs(ctx.db, ACTORS.owner, `select amount_paid, payment_status from public.void_payment($1, 'Cheque bounced')`, [last.payment_id]);
+    expect(voided).toEqual({ amount_paid: '1500.00', payment_status: 'partial' });
+    expect((await pgError(queryAs(ctx.db, ACTORS.owner, `select public.void_payment($1, 'Again')`, [last.payment_id]))).code).toBe('23514');
+
+    // Receipts are the ledger: nobody writes or deletes them directly, and they always sum up.
+    for (const sql of ['delete from public.payments', 'update public.payments set amount = 1', `insert into public.payments (amount) values (1)`]) {
+      expect((await pgError(queryAs(ctx.db, ACTORS.owner, sql))).code).toBe('42501');
+    }
+    await syncInvoice(ctx.db, ACTORS.staff, intraStatePayload(ctx.md, { amount_paid: '1770.00', payment_status: 'paid', payment_mode: 'upi' }));
+    const { rows } = await ctx.db.query(`
+      select i.invoice_no from public.invoices i left join public.payments p on p.invoice_id = i.id and p.voided_at is null
+       group by i.id having i.amount_paid <> coalesce(sum(p.amount), 0)`);
+    expect(rows).toEqual([]);
+  });
 });

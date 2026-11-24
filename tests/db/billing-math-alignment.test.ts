@@ -2,7 +2,7 @@
 // accept and store unchanged: a disagreement would stop a legitimate bill at the factory gate.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PGlite } from '@electric-sql/pglite';
-import { calculateInvoice, weightForPieces, type InvoiceInput, type InvoiceLine } from '../../src/lib/billing-math';
+import { calculateInvoiceDetail, weightForPieces, type InvoiceInput, type InvoiceLine } from '../../src/lib/billing-math';
 import { ACTORS, createTestDb, intraStatePayload, outcome, queryAs, seedMasterData, syncInvoice, type MasterData, type Payload } from './harness';
 
 /** Exact paise -> '1180.00', without floating point. */
@@ -12,7 +12,7 @@ function rupees(paise: number): string {
 }
 
 function toPayload(md: MasterData, input: InvoiceInput): Payload {
-  const amounts = calculateInvoice(input);
+  const { amounts, lines, charges } = calculateInvoiceDetail(input);
   const billed = input.freight_paid_by === 'seller';
   return intraStatePayload(md, {
     bill_type: input.bill_type,
@@ -25,6 +25,9 @@ function toPayload(md: MasterData, input: InvoiceInput): Payload {
     cgst: rupees(amounts.cgst_paise),
     sgst: rupees(amounts.sgst_paise),
     igst: rupees(amounts.igst_paise),
+    charges_cgst: rupees(charges.cgst_paise),
+    charges_sgst: rupees(charges.sgst_paise),
+    charges_igst: rupees(charges.igst_paise),
     round_off: rupees(amounts.round_off_paise),
     grand_total: rupees(amounts.grand_total_paise),
     items: input.lines.map((line, i) => ({
@@ -37,7 +40,10 @@ function toPayload(md: MasterData, input: InvoiceInput): Payload {
       billing_unit: line.billing_unit,
       unit_rate: rupees(line.unit_rate_paise),
       tax_rate_percent: line.tax_rate_percent,
-      line_total: rupees(calculateInvoice({ ...input, lines: [line], packing_charge_paise: 0, delivery_charge_paise: 0 }).subtotal_paise),
+      line_total: rupees(lines[i]!.line_total_paise),
+      cgst_amount: rupees(lines[i]!.cgst_paise),
+      sgst_amount: rupees(lines[i]!.sgst_paise),
+      igst_amount: rupees(lines[i]!.igst_paise),
     })),
     delivery: { freight_paid_by: input.freight_paid_by, freight_amount: rupees(amounts.dc_to_pay_paise) },
   });

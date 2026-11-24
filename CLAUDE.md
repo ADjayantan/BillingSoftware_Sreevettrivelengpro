@@ -21,7 +21,11 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
   src/app/                  routes, layouts, route handlers
   src/components/           UI (server by default)
   src/lib/billing-math.ts   ALL money/tax/weight arithmetic (pure)
-  src/lib/schemas/          Zod schemas shared by client + server (no secrets)
+  src/lib/bill-form.ts      billing screen state → draft (pure); bill-draft.ts: draft → sync payload
+  src/lib/print-documents.ts  issued bill → print slots of specs/print-templates.md (pure)
+  src/lib/schemas/          Zod schemas; client components import their *types* only
+  src/lib/api/http.ts       route wrapper: session, Zod, error shape, SQLSTATE → HTTP
+  src/lib/data.ts           all reads (numerics cast `::text`); src/proxy.ts refreshes the session
   src/lib/supabase/         server.ts (cookie session → RLS), client.ts (browser), admin.ts (secret key, cron/admin only)
   src/lib/offline-db.ts     Dexie (client only)
   src/lib/{gemini,drive-backup,telegram}.ts   server-only integrations
@@ -57,16 +61,25 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
 ## Sprint 2 decisions (approved by the owner, 24 Nov 2026)
 `is_sez` customers get IGST · packing is always taxable, `delivery_taxable` covers delivery only · one company profile, frozen on each invoice · GST stored per line · job-work bills link to party-DC lots, which close within 1% of inward weight or with a reason · receipts go through one atomic RPC. UI copy and print layouts: `specs/`.
 
+In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
+- The browser sends a *draft* plus the total it showed; `/api/invoices/sync` recomputes with the same `composeBill` and refuses a mismatch (`TOTAL_CHANGED`). Never accept amounts from the client.
+- `amount_paid` changes only through `record_payment` / `void_payment` (owner). Cancelling needs all receipts voided, and gives returned material back to its lot.
+- An untaxed delivery, or any charge on a mixed-rate bill, becomes its own line ('Packing charges', 'Delivery charges', 'Delivery, recovered at cost'); the challan leaves those names out.
+- `print.css` is the spec CSS verbatim (tested); exactly one `@page` rule per print job.
+- API errors reach the user only through the `OWN_SENTENCES` allowlist in `api/http.ts`.
+- Keyboard: Enter advances (`data-enter-skip` fields stay on Tab), Ctrl+Enter saves, Alt+N new.
+
 ## Database rules
 - SQL must run on Supabase Postgres 15+. Migrations are append-only `supabase/migrations/NNN_name.sql`; never edit one that has been applied. Run `npm run db:verify` (PGlite) before applying.
 - New-table checklist: RLS on; policies `to authenticated` gated by `(select private.is_staff())` / `(select private.is_owner())` (never `using (true)`); explicit grants after `revoke all … from anon, authenticated, service_role` (Supabase grants nothing by default since 30 Oct 2026, #45329; `service_role` gets only what cron needs); FK indexes; FKs `NO ACTION`; `private.stamp_row` + `private.log_change` triggers if mutable; every numeric column bounded above (`< 'Infinity'`: NaN passes `>= 0`).
 - `SECURITY DEFINER` only for deliberate RPCs and `private.*` helpers: `set search_path = ''`, schema-qualified names, explicit authorization check, `revoke execute … from public, anon`. Views use `with (security_invoker = true)`.
 - Multi-table writes that must be atomic are plpgsql RPCs (supabase-js has no client transactions). Invoices + items + DC are created only by `public.sync_invoice(jsonb)`.
-- `private` schema (not exposed by the Data API): `app_users` (access allowlist), `document_sequences` (gapless counters), `audit_log` (edit log, CGST Rule 56(8)), helpers. Counter lock order is always INV → DC.
+- `private` schema (not exposed by the Data API): `app_users` (access allowlist), `document_sequences` (gapless counters), `audit_log` (edit log, CGST Rule 56(8)), helpers. Lock order is always INV → DC → job-work lots by id.
 - Access: only users listed in `private.app_users` can read or write anything. Bootstrap the owner in the SQL editor:
   `insert into private.app_users (user_id, display_name, role) select id, 'Owner', 'owner' from auth.users where email = '<owner email>';`
 - Go-live: open **both** series with the last numbers the old system used (0 = fresh start); billing is refused until then, later FYs roll forward by themselves:
   `insert into private.document_sequences (series, fiscal_year, last_value) values ('INV', '26-27', <last>), ('DC', '26-27', <last>);`
+- Go-live: fill in the Company page (billing is refused without it); run migrations 001 then 002.
 - Go-live: turn off public sign-ups in Supabase Auth, and confirm the Data API gate registered (the migration warns if not).
 
 ## Performance budget
@@ -79,4 +92,4 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
 - TypeScript `strict` + `noUncheckedIndexedAccess`; no `any`, no unexplained `!`. Types inferred from Zod (`z.infer`) or generated Supabase types.
 - Files kebab-case, components PascalCase, DB columns snake_case. Comments explain *why*, not what.
 - UI: large type (≥ 18px base), keyboard-first (Enter advances, shortcuts for save/print), mobile-first, zero clutter.
-- Commands: `npm test` (all Vitest), `npm run db:verify` (schema + RLS tests). `dev` / `build` / `lint` / `typecheck` arrive with the Next.js scaffold.
+- Commands: `npm test` (all Vitest), `npm run db:verify` (schema + RLS tests), `npm run lint`, `npm run typecheck`, `npm run build`, `npm run dev`; `npm run --silent seed:sql > seed.sql` writes the trial data for the SQL editor (refuses once an invoice exists).

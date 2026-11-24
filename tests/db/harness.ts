@@ -181,6 +181,34 @@ export async function syncInvoice(db: PGlite, actor: Actor, payload: unknown): P
   return row;
 }
 
+export interface PaymentResult {
+  payment_id: string;
+  amount_paid: string;
+  payment_status: string;
+  replayed: boolean;
+}
+
+export async function recordPayment(
+  db: PGlite,
+  actor: Actor,
+  invoiceId: string,
+  amount: string,
+  overrides: Payload = {},
+): Promise<PaymentResult> {
+  const payload = {
+    client_receipt_id: randomUUID(),
+    invoice_id: invoiceId,
+    amount,
+    received_on: '2026-11-21',
+    mode: 'bank_transfer',
+    ...overrides,
+  };
+  const rows = await queryAs<PaymentResult>(db, actor, 'select * from public.record_payment($1::jsonb)', [
+    JSON.stringify(payload),
+  ]);
+  return rows[0]!;
+}
+
 /** Await a statement that must fail; returns its SQLSTATE and message for assertions. */
 export async function pgError(promise: Promise<unknown>): Promise<{ code: string | undefined; message: string }> {
   try {
@@ -211,7 +239,14 @@ export interface MasterData {
 }
 
 /** Synthetic GSTINs with a valid check character. */
-export const GSTIN = { tn: '33AABCM1234F1Z4', ka: '29AACCB5678G1ZD' } as const;
+export const GSTIN = { tn: '33AABCM1234F1Z4', ka: '29AACCB5678G1ZD', supplier: '33AAECS2468R1ZS' } as const;
+
+export async function seedCompanyProfile(db: PGlite): Promise<void> {
+  await db.exec(`
+    insert into public.company_profile (legal_name, gstin, address, phone, bank_name, bank_account_no, bank_ifsc)
+    values ('Demo Stud Works', '${GSTIN.supplier}', '1 Test Road, Coimbatore 641001', '9000000000',
+            'Demo Bank', '000011112222', 'DEMO0000001')`);
+}
 
 /** Master data inserted as the migration owner (bypasses RLS), like a seed script. */
 export async function seedMasterData(db: PGlite): Promise<MasterData> {
@@ -220,6 +255,7 @@ export async function seedMasterData(db: PGlite): Promise<MasterData> {
     if (!row) throw new Error(`Seed returned no row: ${sql}`);
     return row.id;
   };
+  await seedCompanyProfile(db);
   return {
     tnCustomerId: await one(`
       insert into public.customers (name, gstin, phone, state_code, credit_days, address)
@@ -259,12 +295,61 @@ export function goodsLine(md: MasterData, overrides: Line = {}): Line {
   };
 }
 
+const toPaise = (v: unknown): number => Math.round(Number(v ?? 0) * 100);
+const toDecimal = (p: number): string => (p / 100).toFixed(2);
+
+/**
+ * Fixture only: splits the header GST over lines (and taxable charges) so that it adds up
+ * exactly. Real bills get this from billing-math.ts.
+ */
+export function withLineGst(payload: Payload): Payload {
+  const items = payload.items as Line[];
+  if (!Array.isArray(items) || items.some((i) => i.cgst_amount !== undefined)) return payload;
+  const charges = toPaise(payload.packing_charge) + (payload.delivery_taxable === false ? 0 : toPaise(payload.delivery_charge));
+  const weights = items.map((i) => Number(i.line_total ?? 0) * Number(i.tax_rate_percent ?? 0)); // = paise of full tax
+  const all = weights.reduce((a, b) => a + b, 0);
+  const spread = (head: unknown, share: number): { lines: number[]; charge: number } => {
+    const total = toPaise(head);
+    const none = { lines: items.map(() => 0), charge: 0 };
+    if (!(total > 0)) return none; // zero or NaN
+    const rounded = weights.map((w) => Math.round(w * share));
+    const sum = rounded.reduce((a, b) => a + b, 0);
+    if (charges > 0 && total >= sum) return { lines: rounded, charge: total - sum };
+    if (!(all > 0)) return { ...none, lines: items.map((_, i) => (i === 0 ? total : 0)) };
+    const exact = weights.map((w) => (total * w) / all);
+    const lines = exact.map(Math.floor);
+    let left = total - lines.reduce((a, b) => a + b, 0);
+    const order = exact.map((x, at) => ({ at, r: x - Math.floor(x) })).sort((a, b) => b.r - a.r || a.at - b.at);
+    for (const { at } of order) {
+      if (left <= 0) break;
+      lines[at]! += 1;
+      left -= 1;
+    }
+    return { lines, charge: 0 };
+  };
+  const c = spread(payload.cgst, 0.5);
+  const s = spread(payload.sgst, 0.5);
+  const g = spread(payload.igst, 1);
+  return {
+    ...payload,
+    charges_cgst: toDecimal(c.charge),
+    charges_sgst: toDecimal(s.charge),
+    charges_igst: toDecimal(g.charge),
+    items: items.map((item, i) => ({
+      ...item,
+      cgst_amount: toDecimal(c.lines[i]!),
+      sgst_amount: toDecimal(s.lines[i]!),
+      igst_amount: toDecimal(g.lines[i]!),
+    })),
+  };
+}
+
 /**
  * One goods line, 18% GST. Amounts are hand-computed fixtures: the DB only verifies
  * identities, it never computes them.
  */
 export function intraStatePayload(md: MasterData, overrides: Payload = {}): Payload {
-  return {
+  return withLineGst({
     client_temp_id: newTempId(),
     bill_type: 'supply',
     customer_id: md.tnCustomerId,
@@ -289,7 +374,7 @@ export function intraStatePayload(md: MasterData, overrides: Payload = {}): Payl
       freight_amount: '0.00',
     },
     ...overrides,
-  };
+  });
 }
 
 export function interStatePayload(md: MasterData, overrides: Payload = {}): Payload {

@@ -9,7 +9,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "seed:sql": "node scripts/seed.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.17",

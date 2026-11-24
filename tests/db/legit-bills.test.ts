@@ -10,6 +10,7 @@ import {
   intraStatePayload,
   outcome,
   queryAs,
+  recordPayment,
   seedMasterData,
   syncInvoice,
   type Line,
@@ -117,12 +118,11 @@ describe('legitimate bills are accepted', () => {
 
   it('a part payment, then settlement net of TDS, then a cancellation that keeps number and amounts', async () => {
     const paid = await syncInvoice(db, ACTORS.staff, intraStatePayload(md));
-    for (const sql of [
-      `update public.invoices set amount_paid = 1000.00, payment_status = 'partial' where id = $1`,
-      `update public.invoices set amount_paid = 1740.00, payment_status = 'paid' where id = $1`,
-    ]) {
-      expect(await outcome(queryAs(db, ACTORS.staff, sql, [paid.invoice_id]))).toMatch(/^accepted/);
-    }
+    expect(await recordPayment(db, ACTORS.staff, paid.invoice_id, '1000.00')).toMatchObject({ payment_status: 'partial' });
+    expect(await recordPayment(db, ACTORS.staff, paid.invoice_id, '740.00', { settles_invoice: true })).toMatchObject({
+      payment_status: 'paid',
+      amount_paid: '1740.00',
+    });
     const other = await syncInvoice(db, ACTORS.staff, intraStatePayload(md));
     const [cancelled] = await queryAs(
       db,

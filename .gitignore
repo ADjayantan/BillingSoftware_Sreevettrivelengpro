@@ -1,0 +1,13 @@
+node_modules/
+.next/
+out/
+coverage/
+
+# Every env file is private except the template
+.env*
+!.env.example
+
+*.tsbuildinfo
+next-env.d.ts
+supabase/.temp/
+.vercel/

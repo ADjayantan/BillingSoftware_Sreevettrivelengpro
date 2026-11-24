@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+# Byte-exact: the frozen contract is pinned by hash, the specs were supplied as-is.
+tests/billing-math.test.ts -text
+specs/** -text

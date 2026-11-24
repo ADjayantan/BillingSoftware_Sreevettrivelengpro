@@ -1,0 +1,901 @@
+{
+  "_meta": {
+    "dataset": "StudFlow AI | November 2026 training factory",
+    "use": "Fictional customers, identifiers, addresses, weighments and prices. GSTINs are checksum-valid format examples. Use a demo tenant with test message delivery.",
+    "import_order": [
+      "customers",
+      "stud_items",
+      "metal_rates",
+      "job_work_ledger"
+    ],
+    "import_notes": "Upsert the four named arrays by UUID within a transaction. _meta holds fixture notes outside the database tables.",
+    "currency": "INR. Money and kg quantities are base-10 strings for PostgreSQL NUMERIC. Positive opening balances are receivables. Unit prices and metal rates exclude GST.",
+    "weight": "A null unit_weight_kg selects the steel formula from the dimensions. A decimal value is the measured kg per finished piece and overrides the formula, including on brass items.",
+    "products": "These are fixed-length metric stud bolts for mating nuts. The six-digit HSN identifies steel stud bolts (731815) or brass stud bolts (741533). Set the code on each item.",
+    "hsn_reference": "https://content.dgft.gov.in/Website/dgftprod/f6d9d4ad-5eda-411b-be3d-508cd1013618/Trade%20Notice%2011%20-%20ITC%28HS%29%20based%20Export%20Policy.pdf",
+    "metal_rates": {
+      "window": "2026-11-09 through 2026-11-18, daily 09:00 Asia/Kolkata",
+      "opening_comparator_date": "2026-11-08",
+      "opening_rates_inr_per_kg": {
+        "MS": "55.25",
+        "EN8": "79.50",
+        "EN19": "112.50",
+        "SS 304": "206.00",
+        "SS 316": "318.00",
+        "Brass": "725.00"
+      }
+    },
+    "job_work": {
+      "quantities": "Each lot was received on the customer's party_dc_no. Its return challan covers finished studs and separately weighed scrap. Outward weight is finished studs only. Balance is customer-owned metal still held for processing.",
+      "return_challans": [
+        {
+          "party_dc_no": "VPC/26-27/0168",
+          "return_dc_no": "RET/26-27/0031",
+          "dispatched_at": "2026-11-11T16:35:00+05:30"
+        },
+        {
+          "party_dc_no": "BMS/26-27/0074",
+          "return_dc_no": "RET/26-27/0032",
+          "dispatched_at": "2026-11-16T14:10:00+05:30"
+        },
+        {
+          "party_dc_no": "PVF/26-27/0106",
+          "return_dc_no": "RET/26-27/0033",
+          "dispatched_at": "2026-11-18T11:45:00+05:30"
+        }
+      ]
+    }
+  },
+  "customers": [
+    {
+      "id": "9e753d0d-d603-5150-8569-d98969067bf6",
+      "name": "Vellaru Pump Castings Private Limited",
+      "gstin": "33ZZZCV6721B1Z1",
+      "phone": "+919000009101",
+      "state_code": "33",
+      "credit_days": 30,
+      "address": "Shed 18, SIDCO Industrial Estate, Kurichi, Coimbatore, Tamil Nadu 641021",
+      "opening_balance": "18750.50",
+      "created_at": "2026-11-02T09:00:00+05:30"
+    },
+    {
+      "id": "9f085e9c-20f5-5a83-9c7a-26fdb5a186e3",
+      "name": "Marudham Press Tools LLP",
+      "gstin": "33ZZZFM6722C1Z1",
+      "phone": "+919000009102",
+      "state_code": "33",
+      "credit_days": 15,
+      "address": "Plot 27, South Phase, Ambattur Industrial Estate, Chennai, Tamil Nadu 600058",
+      "opening_balance": "0.00",
+      "created_at": "2026-11-02T09:00:00+05:30"
+    },
+    {
+      "id": "02594ee3-0e17-52ad-b597-9abecf9f7508",
+      "name": "Thenmalai Fixture Systems Private Limited",
+      "gstin": "33ZZZCT6723D1ZX",
+      "phone": "+919000009103",
+      "state_code": "33",
+      "credit_days": 45,
+      "address": "Unit 6, SIPCOT Industrial Complex, Phase I, Hosur, Tamil Nadu 635126",
+      "opening_balance": "42680.00",
+      "created_at": "2026-11-02T09:00:00+05:30"
+    },
+    {
+      "id": "794dd15e-44ea-5c31-bdeb-704983b21e0f",
+      "name": "Kaveri Delta Valve Trim LLP",
+      "gstin": "33ZZZFK6724E1ZX",
+      "phone": "+919000009104",
+      "state_code": "33",
+      "credit_days": 30,
+      "address": "Shed 34, SIDCO Industrial Estate, Ariyamangalam, Tiruchirappalli, Tamil Nadu 620010",
+      "opening_balance": "3825.75",
+      "created_at": "2026-11-02T09:00:00+05:30"
+    },
+    {
+      "id": "afb44fb5-468d-5fa4-9d25-dcc04ff6cc8e",
+      "name": "Bhavani Loom Drives Private Limited",
+      "gstin": "33ZZZCB6725F1Z9",
+      "phone": "+919000009105",
+      "state_code": "33",
+      "credit_days": 0,
+      "address": "Door 12, Workshop Lane, Perundurai, Erode, Tamil Nadu 638052",
+      "opening_balance": "0.00",
+      "created_at": "2026-11-02T09:00:00+05:30"
+    },
+    {
+      "id": "4b4e1a71-a7b4-56a7-9677-388e7a108972",
+      "name": "Bharathapuzha Mill Spares LLP",
+      "gstin": "32ZZZFB6726G1Z2",
+      "phone": "+919000009106",
+      "state_code": "32",
+      "credit_days": 21,
+      "address": "Unit 14, Industrial Development Area, Kanjikode West, Palakkad, Kerala 678623",
+      "opening_balance": "8450.00",
+      "created_at": "2026-11-02T09:00:00+05:30"
+    },
+    {
+      "id": "5ec2cb5e-052a-5935-b497-f113b9352e5b",
+      "name": "Periyar Vessel Fittings Private Limited",
+      "gstin": "32ZZZCP6727H1ZR",
+      "phone": "+919000009107",
+      "state_code": "32",
+      "credit_days": 30,
+      "address": "Plot 21, Industrial Development Plot, South Kalamassery, Ernakulam, Kerala 683104",
+      "opening_balance": "23764.25",
+      "created_at": "2026-11-02T09:00:00+05:30"
+    },
+    {
+      "id": "85b689bf-aff4-5420-b5de-bce3ec20be23",
+      "name": "Manali Toolroom Services LLP",
+      "gstin": "32ZZZFM6728J1ZI",
+      "phone": "+919000009108",
+      "state_code": "32",
+      "credit_days": 15,
+      "address": "Shed 8, Industrial Estate, Ollur, Thrissur, Kerala 680306",
+      "opening_balance": "0.00",
+      "created_at": "2026-11-02T09:00:00+05:30"
+    }
+  ],
+  "stud_items": [
+    {
+      "id": "891929ce-8768-54be-a558-14a6650c7ef4",
+      "sku_code": "MS-M8-45-FT",
+      "diameter_mm": 8,
+      "length_mm": 45,
+      "thread_type": "ISO metric RH, 1.25 mm pitch, fully threaded",
+      "material_grade": "MS",
+      "hsn_sac": "731815",
+      "unit_weight_kg": null,
+      "default_rate_per_piece": "3.10",
+      "default_rate_per_kg": "165.00"
+    },
+    {
+      "id": "153610ff-9b29-5e5a-bc7a-47fd0aa4757d",
+      "sku_code": "MS-M10-60-FT",
+      "diameter_mm": 10,
+      "length_mm": 60,
+      "thread_type": "ISO metric RH, 1.5 mm pitch, fully threaded",
+      "material_grade": "MS",
+      "hsn_sac": "731815",
+      "unit_weight_kg": null,
+      "default_rate_per_piece": "5.50",
+      "default_rate_per_kg": "148.00"
+    },
+    {
+      "id": "2302bbcb-a349-5c29-a412-b78730a47cf8",
+      "sku_code": "MS-M14-100-DE",
+      "diameter_mm": 14,
+      "length_mm": 100,
+      "thread_type": "ISO metric RH, 2.0 mm pitch, double-ended",
+      "material_grade": "MS",
+      "hsn_sac": "731815",
+      "unit_weight_kg": null,
+      "default_rate_per_piece": "15.50",
+      "default_rate_per_kg": "135.00"
+    },
+    {
+      "id": "c96f6c00-2ae5-5d39-b78d-c06244de74ae",
+      "sku_code": "MS-M20-180-DE",
+      "diameter_mm": 20,
+      "length_mm": 180,
+      "thread_type": "ISO metric RH, 2.5 mm pitch, double-ended",
+      "material_grade": "MS",
+      "hsn_sac": "731815",
+      "unit_weight_kg": null,
+      "default_rate_per_piece": "51.00",
+      "default_rate_per_kg": "117.00"
+    },
+    {
+      "id": "8e5b6311-c0a8-5326-8efc-af49cd27bc0d",
+      "sku_code": "EN8-M12-80-FT",
+      "diameter_mm": 12,
+      "length_mm": 80,
+      "thread_type": "ISO metric RH, 1.75 mm pitch, fully threaded",
+      "material_grade": "EN8",
+      "hsn_sac": "731815",
+      "unit_weight_kg": null,
+      "default_rate_per_piece": "13.00",
+      "default_rate_per_kg": "184.00"
+    },
+    {
+      "id": "4325bde8-9067-5f2a-91f7-f8c560dd7b33",
+      "sku_code": "EN8-M16-125-DE",
+      "diameter_mm": 16,
+      "length_mm": 125,
+      "thread_type": "ISO metric RH, 2.0 mm pitch, double-ended",
+      "material_grade": "EN8",
+      "hsn_sac": "731815",
+      "unit_weight_kg": "0.189600",
+      "default_rate_per_piece": "32.00",
+      "default_rate_per_kg": "168.50"
+    },
+    {
+      "id": "d721409b-6df6-53a4-ba70-0cb7fbeaa999",
+      "sku_code": "EN8-M18-140-DE",
+      "diameter_mm": 18,
+      "length_mm": 140,
+      "thread_type": "ISO metric RH, 1.5 mm pitch, double-ended",
+      "material_grade": "EN8",
+      "hsn_sac": "731815",
+      "unit_weight_kg": null,
+      "default_rate_per_piece": "46.00",
+      "default_rate_per_kg": "167.00"
+    },
+    {
+      "id": "b84996f8-1594-5b8a-9a32-c3f40b029e36",
+      "sku_code": "EN8-M24-250-DE",
+      "diameter_mm": 24,
+      "length_mm": 250,
+      "thread_type": "ISO metric RH, 3.0 mm pitch, double-ended",
+      "material_grade": "EN8",
+      "hsn_sac": "731815",
+      "unit_weight_kg": null,
+      "default_rate_per_piece": "128.00",
+      "default_rate_per_kg": "145.00"
+    },
+    {
+      "id": "1bfe7c9e-2a87-5a48-a9bc-ec0d4b63c1e5",
+      "sku_code": "SS304-M10-75-FT",
+      "diameter_mm": 10,
+      "length_mm": 75,
+      "thread_type": "ISO metric RH, 1.5 mm pitch, fully threaded",
+      "material_grade": "SS 304",
+      "hsn_sac": "731815",
+      "unit_weight_kg": null,
+      "default_rate_per_piece": "18.00",
+      "default_rate_per_kg": "388.00"
+    },
+    {
+      "id": "e3665ffb-2ac8-5a97-8962-ad6dad4a5819",
+      "sku_code": "SS304-M12-75-FT",
+      "diameter_mm": 12,
+      "length_mm": 75,
+      "thread_type": "ISO metric RH, 1.75 mm pitch, fully threaded",
+      "material_grade": "SS 304",
+      "hsn_sac": "731815",
+      "unit_weight_kg": "0.060500",
+      "default_rate_per_piece": "24.50",
+      "default_rate_per_kg": "400.00"
+    },
+    {
+      "id": "2a1c6969-3355-58a1-8991-2c05b80c7135",
+      "sku_code": "SS304-M16-150-DE",
+      "diameter_mm": 16,
+      "length_mm": 150,
+      "thread_type": "ISO metric RH, 2.0 mm pitch, double-ended",
+      "material_grade": "SS 304",
+      "hsn_sac": "731815",
+      "unit_weight_kg": null,
+      "default_rate_per_piece": "76.00",
+      "default_rate_per_kg": "324.00"
+    },
+    {
+      "id": "0b9f9ce9-3e3b-561f-b4a3-243122caa3b9",
+      "sku_code": "SS304-M22-200-DE",
+      "diameter_mm": 22,
+      "length_mm": 200,
+      "thread_type": "ISO metric RH, 2.5 mm pitch, double-ended",
+      "material_grade": "SS 304",
+      "hsn_sac": "731815",
+      "unit_weight_kg": null,
+      "default_rate_per_piece": "186.00",
+      "default_rate_per_kg": "315.00"
+    },
+    {
+      "id": "142798a3-47c3-5732-8163-f04d8c585847",
+      "sku_code": "BRASS-M8-40-FT",
+      "diameter_mm": 8,
+      "length_mm": 40,
+      "thread_type": "ISO metric RH, 1.25 mm pitch, fully threaded",
+      "material_grade": "Brass",
+      "hsn_sac": "741533",
+      "unit_weight_kg": "0.015300",
+      "default_rate_per_piece": "15.50",
+      "default_rate_per_kg": "1010.00"
+    },
+    {
+      "id": "591e9646-a687-50fc-91f0-2d2d1dfdb8f2",
+      "sku_code": "BRASS-M12-65-DE",
+      "diameter_mm": 12,
+      "length_mm": 65,
+      "thread_type": "ISO metric RH, 1.75 mm pitch, double-ended",
+      "material_grade": "Brass",
+      "hsn_sac": "741533",
+      "unit_weight_kg": "0.058400",
+      "default_rate_per_piece": "55.00",
+      "default_rate_per_kg": "950.00"
+    },
+    {
+      "id": "a87c9ca2-425b-5cac-9dee-604d150b442b",
+      "sku_code": "BRASS-M20-100-DE",
+      "diameter_mm": 20,
+      "length_mm": 100,
+      "thread_type": "ISO metric RH, 2.5 mm pitch, double-ended",
+      "material_grade": "Brass",
+      "hsn_sac": "741533",
+      "unit_weight_kg": "0.249000",
+      "default_rate_per_piece": "226.00",
+      "default_rate_per_kg": "910.00"
+    }
+  ],
+  "metal_rates": [
+    {
+      "id": "ebadd70d-fbdb-55b1-b4b0-7a9813e8c353",
+      "material_grade": "MS",
+      "rate_per_kg": "55.50",
+      "previous_rate_per_kg": "55.25",
+      "change_delta": "0.25",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-09T09:00:00+05:30"
+    },
+    {
+      "id": "977277da-f730-5ebb-8449-880d2ff7accc",
+      "material_grade": "EN8",
+      "rate_per_kg": "80.00",
+      "previous_rate_per_kg": "79.50",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-09T09:00:00+05:30"
+    },
+    {
+      "id": "9d8604b1-e621-5c76-be1e-6880229416c1",
+      "material_grade": "EN19",
+      "rate_per_kg": "113.00",
+      "previous_rate_per_kg": "112.50",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-09T09:00:00+05:30"
+    },
+    {
+      "id": "0945821a-e9cb-5e7c-9082-ac6eaa9cffff",
+      "material_grade": "SS 304",
+      "rate_per_kg": "207.00",
+      "previous_rate_per_kg": "206.00",
+      "change_delta": "1.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-09T09:00:00+05:30"
+    },
+    {
+      "id": "642bacba-686a-59c8-bb38-486d51e39d2c",
+      "material_grade": "SS 316",
+      "rate_per_kg": "319.00",
+      "previous_rate_per_kg": "318.00",
+      "change_delta": "1.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-09T09:00:00+05:30"
+    },
+    {
+      "id": "2b901288-7245-5824-ac6a-28f16aa20590",
+      "material_grade": "Brass",
+      "rate_per_kg": "727.50",
+      "previous_rate_per_kg": "725.00",
+      "change_delta": "2.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-09T09:00:00+05:30"
+    },
+    {
+      "id": "14922bf2-b491-5cff-b73a-a5e650c266b5",
+      "material_grade": "MS",
+      "rate_per_kg": "55.50",
+      "previous_rate_per_kg": "55.50",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-10T09:00:00+05:30"
+    },
+    {
+      "id": "c0841865-05ca-5b34-ad1d-c5833171a133",
+      "material_grade": "EN8",
+      "rate_per_kg": "80.25",
+      "previous_rate_per_kg": "80.00",
+      "change_delta": "0.25",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-10T09:00:00+05:30"
+    },
+    {
+      "id": "08ed50ab-4d35-552f-947a-d6082ea7cae1",
+      "material_grade": "EN19",
+      "rate_per_kg": "114.00",
+      "previous_rate_per_kg": "113.00",
+      "change_delta": "1.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-10T09:00:00+05:30"
+    },
+    {
+      "id": "57ca746c-ad8c-59f7-aef8-5396b621cdb2",
+      "material_grade": "SS 304",
+      "rate_per_kg": "208.50",
+      "previous_rate_per_kg": "207.00",
+      "change_delta": "1.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-10T09:00:00+05:30"
+    },
+    {
+      "id": "23f32ea3-168b-545f-9873-3fccb7321bf5",
+      "material_grade": "SS 316",
+      "rate_per_kg": "320.00",
+      "previous_rate_per_kg": "319.00",
+      "change_delta": "1.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-10T09:00:00+05:30"
+    },
+    {
+      "id": "418728ad-c89e-5bf5-8c9e-69360a843e29",
+      "material_grade": "Brass",
+      "rate_per_kg": "728.00",
+      "previous_rate_per_kg": "727.50",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-10T09:00:00+05:30"
+    },
+    {
+      "id": "eb088e04-a05b-519c-9c0a-e9efe0c8729f",
+      "material_grade": "MS",
+      "rate_per_kg": "56.00",
+      "previous_rate_per_kg": "55.50",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-11T09:00:00+05:30"
+    },
+    {
+      "id": "b40a7264-e46c-5e17-88ab-9792aef148d6",
+      "material_grade": "EN8",
+      "rate_per_kg": "81.00",
+      "previous_rate_per_kg": "80.25",
+      "change_delta": "0.75",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-11T09:00:00+05:30"
+    },
+    {
+      "id": "2fe1e331-75cd-5a17-ab9f-520f29a239d3",
+      "material_grade": "EN19",
+      "rate_per_kg": "114.00",
+      "previous_rate_per_kg": "114.00",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-11T09:00:00+05:30"
+    },
+    {
+      "id": "807ee7db-1a3b-5e25-98a9-6ef47da11642",
+      "material_grade": "SS 304",
+      "rate_per_kg": "210.00",
+      "previous_rate_per_kg": "208.50",
+      "change_delta": "1.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-11T09:00:00+05:30"
+    },
+    {
+      "id": "b717caa9-a309-5ec2-8ba1-495c730f9032",
+      "material_grade": "SS 316",
+      "rate_per_kg": "321.50",
+      "previous_rate_per_kg": "320.00",
+      "change_delta": "1.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-11T09:00:00+05:30"
+    },
+    {
+      "id": "7fda0717-832c-5b65-a62c-928025627433",
+      "material_grade": "Brass",
+      "rate_per_kg": "730.50",
+      "previous_rate_per_kg": "728.00",
+      "change_delta": "2.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-11T09:00:00+05:30"
+    },
+    {
+      "id": "9508a0ba-94e0-5f0a-b8f8-3b8b2d3834ec",
+      "material_grade": "MS",
+      "rate_per_kg": "56.50",
+      "previous_rate_per_kg": "56.00",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-12T09:00:00+05:30"
+    },
+    {
+      "id": "a4669055-b336-54b9-acff-2e770f1b6344",
+      "material_grade": "EN8",
+      "rate_per_kg": "81.50",
+      "previous_rate_per_kg": "81.00",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-12T09:00:00+05:30"
+    },
+    {
+      "id": "3723e59d-1c16-53f8-9670-5eca6d818513",
+      "material_grade": "EN19",
+      "rate_per_kg": "115.50",
+      "previous_rate_per_kg": "114.00",
+      "change_delta": "1.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-12T09:00:00+05:30"
+    },
+    {
+      "id": "c58561cd-8b9d-537f-85c4-41fd5c84c74d",
+      "material_grade": "SS 304",
+      "rate_per_kg": "209.50",
+      "previous_rate_per_kg": "210.00",
+      "change_delta": "-0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-12T09:00:00+05:30"
+    },
+    {
+      "id": "470301f8-af8c-5535-828b-74009131d585",
+      "material_grade": "SS 316",
+      "rate_per_kg": "321.50",
+      "previous_rate_per_kg": "321.50",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-12T09:00:00+05:30"
+    },
+    {
+      "id": "459aea10-9f88-5510-8364-5b432f0e331f",
+      "material_grade": "Brass",
+      "rate_per_kg": "730.00",
+      "previous_rate_per_kg": "730.50",
+      "change_delta": "-0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-12T09:00:00+05:30"
+    },
+    {
+      "id": "999df430-8054-55dc-ba26-586af105da7d",
+      "material_grade": "MS",
+      "rate_per_kg": "56.25",
+      "previous_rate_per_kg": "56.50",
+      "change_delta": "-0.25",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-13T09:00:00+05:30"
+    },
+    {
+      "id": "0c1d12e2-4bc3-571c-b74c-8cb4e628bd7e",
+      "material_grade": "EN8",
+      "rate_per_kg": "81.25",
+      "previous_rate_per_kg": "81.50",
+      "change_delta": "-0.25",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-13T09:00:00+05:30"
+    },
+    {
+      "id": "91a77988-1cfe-5f5e-a678-77110d800c78",
+      "material_grade": "EN19",
+      "rate_per_kg": "116.00",
+      "previous_rate_per_kg": "115.50",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-13T09:00:00+05:30"
+    },
+    {
+      "id": "c5a5bcca-5576-5c9f-b423-503562431881",
+      "material_grade": "SS 304",
+      "rate_per_kg": "209.50",
+      "previous_rate_per_kg": "209.50",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-13T09:00:00+05:30"
+    },
+    {
+      "id": "d798b8d7-9b86-547b-981b-0e8afea2d789",
+      "material_grade": "SS 316",
+      "rate_per_kg": "322.00",
+      "previous_rate_per_kg": "321.50",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-13T09:00:00+05:30"
+    },
+    {
+      "id": "752b74f5-82aa-5a0e-bde0-0672571052d8",
+      "material_grade": "Brass",
+      "rate_per_kg": "732.50",
+      "previous_rate_per_kg": "730.00",
+      "change_delta": "2.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-13T09:00:00+05:30"
+    },
+    {
+      "id": "697704a1-e613-5718-9e51-fb749aaa6375",
+      "material_grade": "MS",
+      "rate_per_kg": "56.25",
+      "previous_rate_per_kg": "56.25",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-14T09:00:00+05:30"
+    },
+    {
+      "id": "71c7db58-0dad-5b00-872b-fa98ae1f1eab",
+      "material_grade": "EN8",
+      "rate_per_kg": "81.25",
+      "previous_rate_per_kg": "81.25",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-14T09:00:00+05:30"
+    },
+    {
+      "id": "40ce43b4-77e0-5d19-adae-73bd6d19e6b8",
+      "material_grade": "EN19",
+      "rate_per_kg": "116.00",
+      "previous_rate_per_kg": "116.00",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-14T09:00:00+05:30"
+    },
+    {
+      "id": "ca220bc7-89aa-5bae-9a6c-23bf88f0ad58",
+      "material_grade": "SS 304",
+      "rate_per_kg": "209.50",
+      "previous_rate_per_kg": "209.50",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-14T09:00:00+05:30"
+    },
+    {
+      "id": "2a119ce6-166b-5ecd-852e-000dcf1a7f24",
+      "material_grade": "SS 316",
+      "rate_per_kg": "322.00",
+      "previous_rate_per_kg": "322.00",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-14T09:00:00+05:30"
+    },
+    {
+      "id": "018786e9-bad9-503b-84d2-fcc0f7014d89",
+      "material_grade": "Brass",
+      "rate_per_kg": "732.50",
+      "previous_rate_per_kg": "732.50",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-14T09:00:00+05:30"
+    },
+    {
+      "id": "6aab2fcd-a21d-5fee-947f-d307d376efbe",
+      "material_grade": "MS",
+      "rate_per_kg": "56.25",
+      "previous_rate_per_kg": "56.25",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-15T09:00:00+05:30"
+    },
+    {
+      "id": "4525e8bd-71d8-5d22-96c2-a05fe5168696",
+      "material_grade": "EN8",
+      "rate_per_kg": "81.25",
+      "previous_rate_per_kg": "81.25",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-15T09:00:00+05:30"
+    },
+    {
+      "id": "8717b3b5-705a-5cd4-8d32-5aeee5f87ef6",
+      "material_grade": "EN19",
+      "rate_per_kg": "116.00",
+      "previous_rate_per_kg": "116.00",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-15T09:00:00+05:30"
+    },
+    {
+      "id": "ae4e3a10-cf41-5acf-8057-e83087ee2bc7",
+      "material_grade": "SS 304",
+      "rate_per_kg": "209.50",
+      "previous_rate_per_kg": "209.50",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-15T09:00:00+05:30"
+    },
+    {
+      "id": "1f7cd532-fc02-5c54-9d14-8a9c37af2e08",
+      "material_grade": "SS 316",
+      "rate_per_kg": "322.00",
+      "previous_rate_per_kg": "322.00",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-15T09:00:00+05:30"
+    },
+    {
+      "id": "ca544cbd-731f-5839-ab2c-c70815e2ea6d",
+      "material_grade": "Brass",
+      "rate_per_kg": "732.50",
+      "previous_rate_per_kg": "732.50",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - weekend carry-forward",
+      "recorded_at": "2026-11-15T09:00:00+05:30"
+    },
+    {
+      "id": "843cbda2-7626-57ed-a056-ca693e697c0e",
+      "material_grade": "MS",
+      "rate_per_kg": "57.50",
+      "previous_rate_per_kg": "56.25",
+      "change_delta": "1.25",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-16T09:00:00+05:30"
+    },
+    {
+      "id": "4d5192d9-6684-514c-889d-d5b31480017d",
+      "material_grade": "EN8",
+      "rate_per_kg": "82.00",
+      "previous_rate_per_kg": "81.25",
+      "change_delta": "0.75",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-16T09:00:00+05:30"
+    },
+    {
+      "id": "7c3ee32f-4c75-592a-b6cb-eaff8097e497",
+      "material_grade": "EN19",
+      "rate_per_kg": "117.00",
+      "previous_rate_per_kg": "116.00",
+      "change_delta": "1.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-16T09:00:00+05:30"
+    },
+    {
+      "id": "1827f1bd-ae26-532d-8484-8b083911b6f3",
+      "material_grade": "SS 304",
+      "rate_per_kg": "211.00",
+      "previous_rate_per_kg": "209.50",
+      "change_delta": "1.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-16T09:00:00+05:30"
+    },
+    {
+      "id": "770a763d-ce7c-5471-a3a8-8e43207d012a",
+      "material_grade": "SS 316",
+      "rate_per_kg": "323.50",
+      "previous_rate_per_kg": "322.00",
+      "change_delta": "1.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-16T09:00:00+05:30"
+    },
+    {
+      "id": "764ed08c-6973-5d11-a190-7bacf1c530a3",
+      "material_grade": "Brass",
+      "rate_per_kg": "754.75",
+      "previous_rate_per_kg": "732.50",
+      "change_delta": "22.25",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-16T09:00:00+05:30"
+    },
+    {
+      "id": "d7ba52e3-cc54-5d99-a87f-5bf2f5855caa",
+      "material_grade": "MS",
+      "rate_per_kg": "58.00",
+      "previous_rate_per_kg": "57.50",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-17T09:00:00+05:30"
+    },
+    {
+      "id": "a0168557-f5e0-53d2-968b-752e30dee099",
+      "material_grade": "EN8",
+      "rate_per_kg": "82.50",
+      "previous_rate_per_kg": "82.00",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-17T09:00:00+05:30"
+    },
+    {
+      "id": "73bf3141-5f58-55da-a826-9f7b538d4aaf",
+      "material_grade": "EN19",
+      "rate_per_kg": "117.00",
+      "previous_rate_per_kg": "117.00",
+      "change_delta": "0.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-17T09:00:00+05:30"
+    },
+    {
+      "id": "d58a584c-1fa7-5a32-8897-8070928fd417",
+      "material_grade": "SS 304",
+      "rate_per_kg": "212.50",
+      "previous_rate_per_kg": "211.00",
+      "change_delta": "1.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-17T09:00:00+05:30"
+    },
+    {
+      "id": "c4499c20-bf5b-5cff-b3a3-0dfe28aee044",
+      "material_grade": "SS 316",
+      "rate_per_kg": "325.00",
+      "previous_rate_per_kg": "323.50",
+      "change_delta": "1.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-17T09:00:00+05:30"
+    },
+    {
+      "id": "b432a57d-7ede-5742-8ca1-10297aa1cab8",
+      "material_grade": "Brass",
+      "rate_per_kg": "752.00",
+      "previous_rate_per_kg": "754.75",
+      "change_delta": "-2.75",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-17T09:00:00+05:30"
+    },
+    {
+      "id": "4bd3222d-394a-527c-89f3-fdf8fade68b2",
+      "material_grade": "MS",
+      "rate_per_kg": "57.75",
+      "previous_rate_per_kg": "58.00",
+      "change_delta": "-0.25",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-18T09:00:00+05:30"
+    },
+    {
+      "id": "5059b80e-e1cf-58cb-8d2e-706b36b050f9",
+      "material_grade": "EN8",
+      "rate_per_kg": "83.00",
+      "previous_rate_per_kg": "82.50",
+      "change_delta": "0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-18T09:00:00+05:30"
+    },
+    {
+      "id": "6db15a1a-d72f-51d9-bc62-712648f1e5e7",
+      "material_grade": "EN19",
+      "rate_per_kg": "116.50",
+      "previous_rate_per_kg": "117.00",
+      "change_delta": "-0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-18T09:00:00+05:30"
+    },
+    {
+      "id": "ab398394-c41b-58bf-8a38-d2372c8f0007",
+      "material_grade": "SS 304",
+      "rate_per_kg": "212.00",
+      "previous_rate_per_kg": "212.50",
+      "change_delta": "-0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-18T09:00:00+05:30"
+    },
+    {
+      "id": "9950b7c1-1ead-5c45-a5bf-a43eaa35b038",
+      "material_grade": "SS 316",
+      "rate_per_kg": "324.00",
+      "previous_rate_per_kg": "325.00",
+      "change_delta": "-1.00",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-18T09:00:00+05:30"
+    },
+    {
+      "id": "2ee5b482-9a62-54a2-b968-e28dcaa72669",
+      "material_grade": "Brass",
+      "rate_per_kg": "751.50",
+      "previous_rate_per_kg": "752.00",
+      "change_delta": "-0.50",
+      "source": "Demo yard sheet - simulated rod quote",
+      "recorded_at": "2026-11-18T09:00:00+05:30"
+    }
+  ],
+  "job_work_ledger": [
+    {
+      "id": "4d7adc6e-cd3f-5f3f-bda5-be59634f6349",
+      "customer_id": "9e753d0d-d603-5150-8569-d98969067bf6",
+      "party_dc_no": "VPC/26-27/0168",
+      "material_grade": "MS",
+      "inward_weight_kg": "350.000",
+      "outward_weight_kg": "340.600",
+      "scrap_weight_kg": "9.400",
+      "balance_weight_kg": "0.000",
+      "status": "closed",
+      "created_at": "2026-11-09T10:15:00+05:30"
+    },
+    {
+      "id": "33d97c13-28bf-5eb5-950a-e23801b51d28",
+      "customer_id": "4b4e1a71-a7b4-56a7-9677-388e7a108972",
+      "party_dc_no": "BMS/26-27/0074",
+      "material_grade": "EN8",
+      "inward_weight_kg": "224.750",
+      "outward_weight_kg": "148.125",
+      "scrap_weight_kg": "4.375",
+      "balance_weight_kg": "72.250",
+      "status": "open",
+      "created_at": "2026-11-12T12:20:00+05:30"
+    },
+    {
+      "id": "163d22a0-09ea-56ad-a69b-669e39e08c2e",
+      "customer_id": "5ec2cb5e-052a-5935-b497-f113b9352e5b",
+      "party_dc_no": "PVF/26-27/0106",
+      "material_grade": "SS 304",
+      "inward_weight_kg": "88.500",
+      "outward_weight_kg": "86.750",
+      "scrap_weight_kg": "1.750",
+      "balance_weight_kg": "0.000",
+      "status": "closed",
+      "created_at": "2026-11-16T09:40:00+05:30"
+    }
+  ]
+}

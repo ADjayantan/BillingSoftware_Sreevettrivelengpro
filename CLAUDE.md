@@ -79,6 +79,11 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
 - `searchCustomers` / `searchStuds` / `openLots` fall back to the copy on network loss or 5xx, never on 401/403. Sign-out clears the copy and the shell; unsent bills stay.
 - Dexie opens with `chromeTransactionDurability: 'strict'` (power cuts). New tables or indexes: add `this.version(2)`, never edit version 1.
 
+## Scheduled jobs
+- Read with `readAllRows` (`src/lib/read-all.ts`): Supabase cuts every answer at 1000 rows and does not say so. The test stand-in cuts too (`pgliteFetch(db, actor, maxRows)`).
+- Claim only what is proven: the backup counts each table it read; a reminder is recorded after Telegram took it (messages ≤ 4096 characters). A failed backup tells the owner on Telegram and undelivered reminders answer 502, in our own sentences only: an unexpected error's text may hold a credential (Telegram's address has the bot token in it).
+- Which wording is true today is decided in one place, `reminderStage` (`whatsapp.ts`): day 0, 7 or 15, else `invoiceSummaryText`. On the days between, `last_reminder_stage` is null and `last_reminder_sent_on` still stops a second listing.
+
 ## Database rules
 - SQL must run on Supabase Postgres 15+. Migrations are append-only `supabase/migrations/NNN_name.sql`; never edit one that has been applied. Run `npm run db:verify` (PGlite) before applying.
 - New-table checklist: RLS on; policies `to authenticated` gated by `(select private.is_staff())` / `(select private.is_owner())` (never `using (true)`); explicit grants after `revoke all … from anon, authenticated, service_role` (Supabase grants nothing by default since 30 Oct 2026, #45329; `service_role` gets only what cron needs); FK indexes; FKs `NO ACTION`; `private.stamp_row` + `private.log_change` triggers if mutable; every numeric column bounded above (`< 'Infinity'`: NaN passes `>= 0`).

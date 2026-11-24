@@ -20,6 +20,9 @@ const columns = (select: string | null): string =>
         })
         .join(', ');
 
+/** Supabase's "Max rows" (1000 on the live project): longer answers are cut, and nothing says so. */
+const MAX_ROWS = 1000;
+
 const STATUS: Record<string, number> = {
   '42501': 403, '23505': 409, '23503': 409, '23514': 400, '22023': 400, '22P02': 400, '23502': 400, '55000': 500,
 };
@@ -35,13 +38,17 @@ function where(url: URL, params: unknown[]): string {
     else if (operator === 'eq') clauses.push(`${ident(key)}::text = $${params.push(value)}`);
     else if (operator === 'gt') clauses.push(`${ident(key)} > $${params.push(value)}`);
     else if (operator === 'gte') clauses.push(`${ident(key)} >= $${params.push(value)}`);
-    else if (operator === 'ilike') clauses.push(`${ident(key)} ilike $${params.push(value)}`);
+    else if (operator === 'lte') clauses.push(`${ident(key)} <= $${params.push(value)}`);
+    else if (operator === 'in') {
+      const list = value.replace(/^\(|\)$/g, '').split(',');
+      clauses.push(`${ident(key)}::text in (${list.map((item) => `$${params.push(item)}`).join(', ')})`);
+    } else if (operator === 'ilike') clauses.push(`${ident(key)} ilike $${params.push(value)}`);
     else throw new Error(`unexpected filter ${key}=${raw}`);
   }
   return clauses.length ? ` where ${clauses.join(' and ')}` : '';
 }
 
-function tail(url: URL): string {
+function tail(url: URL, maxRows: number): string {
   const order = url.searchParams.get('order');
   const limit = url.searchParams.get('limit');
   const offset = url.searchParams.get('offset');
@@ -52,13 +59,13 @@ function tail(url: URL): string {
       return `${ident(name)} ${direction === 'desc' ? 'desc' : 'asc'}`;
     })
     .join(', ');
-  return `${orderBy ? ` order by ${orderBy}` : ''}${limit ? ` limit ${Number(limit)}` : ''}${offset ? ` offset ${Number(offset)}` : ''}`;
+  return `${orderBy ? ` order by ${orderBy}` : ''} limit ${Math.min(limit ? Number(limit) : maxRows, maxRows)}${offset ? ` offset ${Number(offset)}` : ''}`;
 }
 
 /** PostgREST renders dates as text and timestamps as ISO; PGlite hands back Date objects. */
 const asJson = (sql: string): string => `with q as (${sql}) select coalesce(json_agg(row_to_json(q)), '[]'::json)::text as body from q`;
 
-export async function handle(db: PGlite, actor: Actor, method: string, href: string, body: unknown, accept: string): Promise<Response> {
+export async function handle(db: PGlite, actor: Actor, method: string, href: string, body: unknown, accept: string, maxRows = MAX_ROWS): Promise<Response> {
   const url = new URL(href);
   const path = url.pathname.replace(/^\/rest\/v1\//, '');
   const params: unknown[] = [];
@@ -76,7 +83,10 @@ export async function handle(db: PGlite, actor: Actor, method: string, href: str
     const table = `public.${ident(path)}`;
     const returning = ` returning ${columns(url.searchParams.get('select'))}`;
     if (method === 'GET') {
-      sql = `select ${columns(url.searchParams.get('select'))} from ${table}${where(url, params)}${tail(url)}`;
+      sql = `select ${columns(url.searchParams.get('select'))} from ${table}${where(url, params)}${tail(url, maxRows)}`;
+    } else if (method === 'HEAD') {
+      // supabase-js { count: 'exact', head: true }: no rows, the number in a header, never cut.
+      sql = `select count(*)::int as n from ${table}${where(url, params)}`;
     } else if (method === 'POST') {
       const entries = Object.entries(body as Record<string, unknown>);
       const values = entries.map(([, value]) => `$${params.push(value)}`);
@@ -99,6 +109,7 @@ export async function handle(db: PGlite, actor: Actor, method: string, href: str
       const text = (await tx.query<{ body: string }>(asJson(sql), params)).rows[0]!.body;
       return JSON.parse(text) as Record<string, unknown>[];
     });
+    if (method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-range': `*/${String(rows[0]?.n)}` } });
     if (accept.includes('vnd.pgrst.object')) {
       if (rows.length !== 1) return reply(406, { code: 'PGRST116', message: 'Cannot coerce the result to a single JSON object', details: null, hint: null });
       return reply(200, rows[0]);
@@ -113,9 +124,9 @@ export async function handle(db: PGlite, actor: Actor, method: string, href: str
 
 /** A fetch for supabase-js. */
 export const pgliteFetch =
-  (db: PGlite, actor: () => Actor): typeof fetch =>
+  (db: PGlite, actor: () => Actor, maxRows = MAX_ROWS): typeof fetch =>
   async (input, init) => {
     const headers = new Headers(init?.headers);
     const body = typeof init?.body === 'string' && init.body ? (JSON.parse(init.body) as unknown) : undefined;
-    return handle(db, actor(), init?.method ?? 'GET', String(input), body, headers.get('accept') ?? '');
+    return handle(db, actor(), init?.method ?? 'GET', String(input), body, headers.get('accept') ?? '', maxRows);
   };

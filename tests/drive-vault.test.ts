@@ -572,3 +572,139 @@ describe('scripts/drive-connect.ts', () => {
     expect(() => upsertEnv(file, { A: 'x\ny' })).toThrow();
   });
 });
+
+/** Reads a ZIP through its central directory, as any unzip tool does. */
+function unzip(zip: Buffer): Map<string, string> {
+  const files = new Map<string, string>();
+  const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 5, 6]));
+  let at = zip.readUInt32LE(end + 16);
+  for (let i = 0; i < zip.readUInt16LE(end + 10); i++) {
+    const nameLength = zip.readUInt16LE(at + 28);
+    const header = zip.readUInt32LE(at + 42);
+    const start = header + 30 + zip.readUInt16LE(header + 26) + zip.readUInt16LE(header + 28);
+    const raw = zip.subarray(start, start + zip.readUInt32LE(at + 20));
+    files.set(zip.toString('utf8', at + 46, at + 46 + nameLength), (zip.readUInt16LE(at + 10) === 8 ? inflateRawSync(raw) : raw).toString('utf8'));
+    at += 46 + nameLength + zip.readUInt16LE(at + 30) + zip.readUInt16LE(at + 32);
+  }
+  return files;
+}
+
+describe('Weekly backup: nothing left out, and never "OK" when something is', () => {
+  const NIGHT = {
+    creds: TEST_CREDS,
+    backupDate: '2026-11-29',
+    env: { NODE_ENV: 'test' as const, TELEGRAM_BOT_TOKEN: '123456:ABC-DEF', TELEGRAM_OWNER_CHAT_ID: '987654321' },
+  };
+
+  /** The same database behind a server with its own row limit, or a wire that misbehaves. */
+  function client(options: { maxRows?: number; wire?: (real: typeof fetch) => typeof fetch } = {}): SupabaseClient {
+    const real = pgliteFetch(db, () => ACTORS.service, options.maxRows);
+    return createSupabase('http://localhost', 'sb_secret_test', {
+      global: { fetch: options.wire ? options.wire(real) : real },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
+  const reads = (table: string, input: RequestInfo | URL, init?: RequestInit): boolean =>
+    (init?.method ?? 'GET') === 'GET' && new URL(String(input)).pathname.endsWith(`/${table}`);
+
+  const rowsOf = async (table: string): Promise<number> =>
+    (await db.query<{ n: number }>(`select count(*)::int as n from public.${table}`)).rows[0]?.n ?? -1;
+  const everyTable = async (): Promise<string[]> =>
+    (await db.query<{ t: string }>(`select relname as t from pg_class where relnamespace = 'public'::regnamespace and relkind = 'r' order by 1`)).rows.map((row) => row.t);
+
+  async function backUp(source: SupabaseClient): Promise<{ counts: Record<string, number>; files: Map<string, string> }> {
+    const { runWeeklyDisasterBackup } = await import('@/app/api/cron/weekly-backup/route');
+    const result = await runWeeklyDisasterBackup({ ...NIGHT, db: source, fetchImpl: fakeDrive.fetch });
+    const zip = fakeDrive.nodes.get(result.drive_file_id)?.bytes;
+    if (!zip) throw new Error('no file was uploaded');
+    return { counts: result.table_counts, files: unzip(zip) };
+  }
+  const rowsIn = (files: Map<string, string>, table: string): { id: string }[] => JSON.parse(files.get(`json/${table}.json`) ?? 'null') as { id: string }[];
+
+  it('holds every row of a table longer than one answer', async () => {
+    await db.exec(`insert into public.customers (name, state_code, credit_days) select 'Bulk ' || i, '33', 0 from generate_series(1, 2300) as i`);
+    const total = await rowsOf('customers');
+    expect(total).toBeGreaterThan(2300);
+    const { counts, files } = await backUp(client());
+    expect(new Set(rowsIn(files, 'customers').map((row) => row.id)).size).toBe(total);
+    expect(files.get('csv/customers.csv')?.trimEnd().split('\r\n')).toHaveLength(total + 1);
+    expect(counts.customers).toBe(total);
+  });
+
+  it('holds every row of every table when the server cuts answers shorter than asked', async () => {
+    await syncInvoice(db, ACTORS.staff, intraStatePayload(md));
+    const { files } = await backUp(client({ maxRows: 7 }));
+    for (const table of await everyTable()) expect([table, rowsIn(files, table).length]).toEqual([table, await rowsOf(table)]);
+  });
+
+  it('fails and uploads nothing when rows are missing from what it read', async () => {
+    await syncInvoice(db, ACTORS.staff, intraStatePayload(md));
+    const blind = client({ wire: (real) => async (input, init) => (reads('invoices', input, init) ? Response.json([]) : real(input, init)) });
+    await expect(backUp(blind)).rejects.toThrow(/invoices/);
+    expect(fakeDrive.uploadCalls).toBe(0);
+    expect(fakeDrive.telegramMessages).toEqual([]);
+  });
+
+  it('holds a customer added while it was reading', async () => {
+    const late = '00000000-0000-4000-8000-000000000001'; // sorts before everything already read
+    let added = false;
+    const busy = client({
+      wire: (real) => async (input, init) => {
+        const answer = await real(input, init);
+        if (!added && reads('customers', input, init)) {
+          added = true;
+          await db.query(`insert into public.customers (id, name, state_code, credit_days) values ($1, 'Late', '33', 0)`, [late]);
+        }
+        return answer;
+      },
+    });
+    const { files } = await backUp(busy);
+    expect(rowsIn(files, 'customers').some((row) => row.id === late)).toBe(true);
+  });
+
+  it('stays a good backup when only the Telegram note fails', async () => {
+    const { runWeeklyDisasterBackup } = await import('@/app/api/cron/weekly-backup/route');
+    const noTelegram: typeof fetch = async (input, init) =>
+      new URL(String(input)).hostname === 'api.telegram.org' ? new Response('', { status: 502 }) : fakeDrive.fetch(input, init);
+    const result = await runWeeklyDisasterBackup({ ...NIGHT, db: client(), fetchImpl: noTelegram });
+    expect(result.telegram_sent).toBe(false);
+    expect(fakeDrive.uploadCalls).toBe(1);
+  });
+
+  /** One scheduled run with this wire to the outside; what the owner was told. */
+  async function failedRun(outside: typeof fetch): Promise<string> {
+    const { GET } = await import('@/app/api/cron/weekly-backup/route');
+    const env = {
+      CRON_SECRET: 'studflow_test_cron_secret_32_bytes_long_ok', TELEGRAM_BOT_TOKEN: NIGHT.env.TELEGRAM_BOT_TOKEN, TELEGRAM_OWNER_CHAT_ID: NIGHT.env.TELEGRAM_OWNER_CHAT_ID,
+      GOOGLE_DRIVE_ROOT_FOLDER_ID: ROOT_VAULT_ID, GOOGLE_DRIVE_OAUTH_CLIENT_ID: 'c.apps.googleusercontent.com', GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: 'drive-secret', GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN: 'expired-permission',
+    };
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+    vi.stubGlobal('fetch', outside);
+    try {
+      const response = await GET(new Request('http://localhost/api/cron/weekly-backup', { headers: { authorization: `Bearer ${env.CRON_SECRET}` } }));
+      expect(response.status).toBe(500);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
+    expect(fakeDrive.uploadCalls).toBe(0);
+    expect(fakeDrive.telegramMessages).toHaveLength(1);
+    const note = fakeDrive.telegramMessages[0]?.text ?? '';
+    expect(note).toContain('FAILED');
+    for (const secret of [env.CRON_SECRET, env.TELEGRAM_BOT_TOKEN, env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET, env.GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN]) expect(note).not.toContain(secret);
+    return note;
+  }
+  const google = (answer: () => Response): typeof fetch => async (input, init) =>
+    new URL(String(input)).hostname === 'oauth2.googleapis.com' ? answer() : fakeDrive.fetch(input, init);
+
+  it('tells the owner when no backup was saved, and why', async () => {
+    expect(await failedRun(google(() => Response.json({ error: 'invalid_grant' }, { status: 400 })))).toContain('permission has expired');
+  });
+
+  it('tells the owner without the details of an error nobody foresaw', async () => {
+    const note = await failedRun(google(() => {
+      throw new TypeError('connect failed for refresh_token=expired-permission at 10.0.0.7');
+    }));
+    expect(note).not.toContain('10.0.0.7');
+  });
+});

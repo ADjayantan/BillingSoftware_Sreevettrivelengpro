@@ -146,7 +146,10 @@ describe('billing', () => {
     expect(issued).toMatchObject({ status: 201, data: { invoice_no: 'INV/26-27/0001', dc_no: 'DC/26-27/0001', replayed: false } });
     expect((await sync(bill)).data).toEqual({ ...issued.data, replayed: true });
     const edited = await sync({ ...bill, notes: 'urgent' });
-    expect(edited).toMatchObject({ status: 409, error: { code: 'CONFLICT' } });
+    expect(edited).toMatchObject({
+      status: 409,
+      error: { code: 'ALREADY_ISSUED', details: { issued: { invoice_id: issued.data.invoice_id, invoice_no: 'INV/26-27/0001', dc_no: 'DC/26-27/0001' } } },
+    });
     expect(edited.error.message).toContain('INV/26-27/0001');
     const doc = await read(issued.data.invoice_id);
     expect(doc.data).toMatchObject({

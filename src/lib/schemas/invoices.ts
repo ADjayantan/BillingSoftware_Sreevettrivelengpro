@@ -3,6 +3,8 @@ import * as c from './common';
 
 const TEMP_ID = /^OFFLINE-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+export const clientTempId = z.string().regex(TEMP_ID);
+
 const draftLine = z
   .object({
     stud_item_id: c.id.nullable(),
@@ -59,7 +61,7 @@ const transport = z.object({
 /** What the device sends. Amounts are never taken from it: the server recomputes them. */
 export const billDraft = z
   .object({
-    client_temp_id: z.string().regex(TEMP_ID),
+    client_temp_id: clientTempId,
     bill_type: z.enum(['supply', 'job_work']),
     customer_id: c.id,
     invoice_date: c.isoDate,
@@ -92,6 +94,10 @@ export const syncResult = z.object({
   dc_no: z.string(),
   replayed: z.boolean(),
 });
+
+/** What a bill that is already in the books was issued as. */
+export const issuedBill = z.object({ invoice_id: c.id, invoice_no: z.string(), dc_no: z.string().nullable(), grand_total: z.string().nullable() });
+export type IssuedBill = z.infer<typeof issuedBill>;
 
 export const cancelInput = z.object({ reason: z.string().trim().min(3, 'Give a short reason').max(300) });
 

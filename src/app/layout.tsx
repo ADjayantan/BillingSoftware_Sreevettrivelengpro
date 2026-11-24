@@ -5,9 +5,12 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'StudFlow AI',
   description: 'Crash-proof billing and dispatch for stud threading and job work',
+  manifest: '/manifest.json',
+  appleWebApp: { capable: true, title: 'StudFlow' },
+  icons: { icon: '/icon-192.png', apple: '/apple-touch-icon.png' },
 };
 
-export const viewport: Viewport = { width: 'device-width', initialScale: 1 };
+export const viewport: Viewport = { width: 'device-width', initialScale: 1, themeColor: '#0b5d51' };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

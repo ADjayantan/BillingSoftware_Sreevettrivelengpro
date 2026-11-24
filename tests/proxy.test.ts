@@ -88,9 +88,47 @@ describe('proxy', () => {
     const api = await visit('/api/customers', live);
     expect(api.status).toBe(503);
     expect(((await api.json()) as { error: { code: string } }).error.code).toBe('UNAVAILABLE');
-    const page = await visit('/billing', live);
+    // Other pages say so in words, with a way on; nothing is a dead end.
+    const page = await visit('/customers', live);
     expect(page.status).toBe(503);
+    expect(page.headers.get('content-type')).toContain('text/html');
+    expect(page.headers.get('cache-control')).toBe('no-store');
+    expect(await page.text()).toContain('href="/billing"');
     expect(page.cookies.getAll()).toEqual([]);
+  });
+
+  it('lets a signed-in PC open the (static) billing page during an outage, and nobody else', async () => {
+    cloud = 'down';
+    const live = cookieFor(session(3000, 'r1'));
+    const billing = await visit('/billing?bill=OFFLINE-1', live);
+    expect(billing.status).toBe(200);
+    expect(billing.headers.get('x-middleware-next')).toBe('1');
+    expect((await visit('/', live)).headers.get('location')).toBe('http://localhost:3000/billing');
+    expect((await visit('/login', live)).status).toBe(200);
+    expect((await visit('/billing')).headers.get('location')).toBe('http://localhost:3000/login?next=%2Fbilling');
+    expect((await visit('/billing', 'sb-localhost-auth-token-code-verifier=x')).status).toBe(307);
+  });
+
+  it('does not hang on an expired session while the cloud is down', async () => {
+    cloud = 'down';
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const pending = visit('/billing', cookieFor(session(-5, 'r1')));
+      await vi.advanceTimersByTimeAsync(7000);
+      const response = await pending;
+      expect(response.status).toBe(200);
+      expect(response.cookies.getAll()).toEqual([]); // the session survives the outage
+      await vi.advanceTimersByTimeAsync(60_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('serves the install files without a session', async () => {
+    const { config } = await import('@/proxy');
+    const matcher = new RegExp(`^${config.matcher[0]}$`);
+    for (const path of ['/sw.js', '/manifest.json', '/offline.html', '/icon-192.png']) expect(matcher.test(path)).toBe(false);
+    for (const path of ['/billing', '/api/customers', '/sw.js/../customers', '/offline.html/x', '/api/sw.js/x']) expect(matcher.test(path)).toBe(true);
   });
 
   it('skips the sign-in page for the signed-in', async () => {

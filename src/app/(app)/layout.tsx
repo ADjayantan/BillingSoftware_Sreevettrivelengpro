@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { signOut } from '../login/actions';
+import { OfflineBar } from '@/components/offline-bar';
+import { SignOut } from '@/components/sign-out';
 
 const LINKS = [
   ['/billing', 'New bill'],
@@ -22,11 +23,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               {label}
             </Link>
           ))}
-          <form action={signOut} className="ml-auto">
-            <button className="rounded-md px-3 py-2 text-muted" type="submit">Sign out</button>
-          </form>
+          <SignOut />
         </nav>
       </header>
+      <OfflineBar />
       <main className="mx-auto max-w-7xl px-3 py-4">{children}</main>
     </>
   );

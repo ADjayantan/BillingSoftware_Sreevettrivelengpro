@@ -27,7 +27,9 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
   src/lib/api/http.ts       route wrapper: session, Zod, error shape, SQLSTATE → HTTP
   src/lib/data.ts           all reads (numerics cast `::text`); src/proxy.ts refreshes the session
   src/lib/supabase/         server.ts (cookie session → RLS), client.ts (browser), admin.ts (secret key, cron/admin only)
-  src/lib/offline-db.ts     Dexie (client only)
+  src/lib/offline-db.ts     Dexie tables + atomic moves; offline-sync.ts (queue), master-cache.ts (copy),
+                            offline-client.ts (browser wiring). Load ONLY through offline.ts (lazy)
+  public/sw.js              caches /billing's own files; never an API reply or a page with data
   src/lib/{gemini,drive-backup,telegram}.ts   server-only integrations
   supabase/migrations/      append-only SQL
   tests/                    Vitest; tests/db = PGlite + Supabase shim
@@ -68,6 +70,14 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
 - `print.css` is the spec CSS verbatim (tested); exactly one `@page` rule per print job.
 - API errors reach the user only through the `OWN_SENTENCES` allowlist in `api/http.ts`.
 - Keyboard: Enter advances (`data-enter-skip` fields stay on Tab), Ctrl+Enter saves, Alt+N new.
+
+## Offline rules (Sprint 3A)
+- `/billing` stays **static with no data** (`dynamic = 'error'`): it is the offline shell, and the proxy lets a PC with a session cookie open it while the cloud is down. Data comes from `/api` (RLS) or Dexie.
+- A bill has one `OFFLINE-<uuid>` from the first moment: draft → queue (one transaction) → issued. Edits after a refusal keep the id. Never mint a second id for the same bill, never change a queued `draft`.
+- `/api/invoices/sync` passes a refusal on only after checking that the id has no invoice: otherwise 409 `ALREADY_ISSUED` with `details.issued`. Failures ≥ 500 prove nothing and are resent.
+- Queue: only a `pending` bill never sent, or a `rejected` one, may be edited; `pending` can never be dismissed. Network, 5xx, 401, 403 and `NOT_READY` stop the run and keep the bill.
+- `searchCustomers` / `searchStuds` / `openLots` fall back to the copy on network loss or 5xx, never on 401/403. Sign-out clears the copy and the shell; unsent bills stay.
+- Dexie opens with `chromeTransactionDurability: 'strict'` (power cuts). New tables or indexes: add `this.version(2)`, never edit version 1.
 
 ## Database rules
 - SQL must run on Supabase Postgres 15+. Migrations are append-only `supabase/migrations/NNN_name.sql`; never edit one that has been applied. Run `npm run db:verify` (PGlite) before applying.

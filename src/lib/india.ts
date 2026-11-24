@@ -52,3 +52,7 @@ export function formatDate(isoDate: string): string {
   const [year = '', month = '', day = ''] = isoDate.slice(0, 10).split('-');
   return `${Number(day)} ${MONTHS[Number(month) - 1] ?? ''} ${year}`;
 }
+
+/** '24 Nov, 10:32 am' in India time, for "when was this typed". */
+export const formatTime = (epochMs: number): string =>
+  new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(epochMs);

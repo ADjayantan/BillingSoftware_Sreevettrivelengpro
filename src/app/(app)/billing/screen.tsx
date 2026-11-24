@@ -2,33 +2,25 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { searchCustomers } from '@/components/customer-search';
 import { enterAdvances } from '@/components/enter-advance';
 import { Field, Notice } from '@/components/field';
-import { Typeahead, type Option } from '@/components/typeahead';
+import { Typeahead } from '@/components/typeahead';
 import { useAltN } from '@/components/use-alt-n';
 import { api } from '@/lib/api-client';
+import { autosave } from '@/lib/autosave';
 import { distinctRates } from '@/lib/bill-draft';
 import * as f from '@/lib/bill-form';
-import { addDays, istDate, stateLabel } from '@/lib/india';
-import { formatInr, formatPaise, trimZeros } from '@/lib/money';
-import type { Customer, JobWorkLot, StudItem } from '@/lib/schemas/masters';
+import { addDays, formatTime, istDate, stateLabel } from '@/lib/india';
+import { openLots, searchCustomers, searchStuds } from '@/lib/master-search';
+import { formatInr, formatPaise } from '@/lib/money';
+import { offlineEngine, type OfflineEngine } from '@/lib/offline';
+import type { Customer } from '@/lib/schemas/masters';
+import { SavedBill } from './saved-bill';
 import { TransportFields } from './transport-fields';
 
+/** One id per bill, from the first moment, kept through crashes, retries and edits. */
 const mintId = (): string => `OFFLINE-${crypto.randomUUID()}`;
-
-async function searchStuds(q: string): Promise<Option<StudItem>[]> {
-  if (q.trim() === '') return [];
-  const result = await api<{ rows: StudItem[] }>(`/api/stud-items?${new URLSearchParams({ q }).toString()}`);
-  if (!result.ok) return [];
-  return result.data.rows
-    .filter((row) => row.is_active)
-    .slice(0, 12)
-    .map((row) => ({
-      key: row.id, label: row.sku_code, value: row,
-      detail: `${trimZeros(row.diameter_mm)} × ${trimZeros(row.length_mm)} mm · ${row.material_grade} · ₹${row.default_rate_per_piece ? `${trimZeros(row.default_rate_per_piece)}/pc` : row.default_rate_per_kg ? `${trimZeros(row.default_rate_per_kg)}/kg` : 'no rate'}`,
-    }));
-}
+const mintForm = (type: f.BillType = 'supply'): f.BillForm => f.newBill(mintId(), istDate(new Date()), type);
 
 interface Issued {
   invoice_id: string;
@@ -36,19 +28,94 @@ interface Issued {
   dc_no: string;
 }
 
-export function BillingScreen({ today }: { today: string }) {
-  // The id is minted on first save, not on render, so server and browser HTML agree.
-  const [form, setForm] = useState<f.BillForm>(() => f.newBill('', today));
-  const [error, setError] = useState<string | null>(null);
+interface Opened {
+  /** Remounts the editor: a bill refused twice must not keep its first attempt's state. */
+  turn: number;
+  form: f.BillForm;
+  engine: OfflineEngine | null;
+  /** When the restored draft was last typed into; null for a new bill. */
+  restoredAt: number | null;
+  error?: string;
+}
+
+/**
+ * Rendered only in the browser, once this PC's store has been read: the page itself is static,
+ * so it opens with no cloud and no internet.
+ */
+export function BillingScreen() {
+  const [opened, setOpened] = useState<Opened | null>(null);
+  const release = useRef<() => void>(() => undefined);
+
+  useEffect(() => {
+    let left = false;
+    void (async () => {
+      const wanted = new URLSearchParams(window.location.search).get('bill');
+      const engine = await offlineEngine();
+      const fresh = mintForm();
+      let form: f.BillForm | null = null;
+      let restoredAt: number | null = null;
+      if (engine) {
+        const draft = await engine.openDraft(wanted, fresh.tempId).catch(() => null);
+        if (left) return draft?.release();
+        if (draft) release.current = draft.release;
+        form = draft?.record ? f.reviveForm(draft.record.form, fresh.today) : null;
+        restoredAt = form ? (draft?.record?.updated_at ?? null) : null;
+      }
+      if (left) return;
+      if (wanted) window.history.replaceState(null, '', '/billing');
+      setOpened({ turn: 0, form: form ?? fresh, engine, restoredAt });
+    })();
+    return () => {
+      left = true;
+      release.current();
+      release.current = () => undefined;
+    };
+  }, []);
+
+  async function show(form: f.BillForm, error?: string): Promise<void> {
+    release.current();
+    release.current = opened?.engine ? await opened.engine.newDraftLock(form.tempId) : () => undefined;
+    setOpened((old) => ({ turn: (old?.turn ?? 0) + 1, form, engine: old?.engine ?? null, restoredAt: null, ...(error ? { error } : {}) }));
+  }
+
+  if (!opened) return <p className="text-muted" role="status">Opening…</p>;
+  return <BillEditor key={opened.turn} opened={opened} onNew={(type) => void show(mintForm(type))} onReopen={(form, error) => void show(form, error)} />;
+}
+
+function BillEditor({ opened, onNew, onReopen }: {
+  opened: Opened;
+  onNew: (type: f.BillType) => void;
+  /** A refused bill comes back to the form, under its own id. */
+  onReopen: (form: f.BillForm, error: string) => void;
+}) {
+  const { engine, restoredAt } = opened;
+  const [form, setForm] = useState<f.BillForm>(opened.form);
+  const [error, setError] = useState<string | null>(opened.error ?? null);
   const [busy, setBusy] = useState(false);
-  const [issued, setIssued] = useState<Issued | null>(null);
-  const printLink = useRef<HTMLAnchorElement>(null);
+  const [restored, setRestored] = useState(restoredAt !== null);
+  const [saved, setSaved] = useState<{ issued: Issued | null } | null>(null);
+  const [noCompany, setNoCompany] = useState(false);
   const afterLines = useRef<HTMLDivElement>(null);
   const lotRequest = useRef(0);
 
+  // Every change goes to disk, the first one at once. An emptied form leaves no draft behind.
+  const [saver] = useState(() =>
+    autosave<f.BillForm>(async (value) => {
+      if (!engine) return;
+      await (f.isEmptyForm(value) ? engine.deleteDraft(value.tempId) : engine.saveDraft(value));
+    }),
+  );
+  const untouched = useRef(opened.form);
   useEffect(() => {
-    if (issued) printLink.current?.focus();
-  }, [issued]);
+    if (form !== untouched.current) saver.push(form);
+  }, [form, saver]);
+  useEffect(() => {
+    engine?.setActiveSaver(saver);
+    return () => {
+      engine?.setActiveSaver(null);
+      void saver.flush();
+    };
+  }, [engine, saver]);
 
   const patch = (change: Partial<f.BillForm>): void => setForm((old) => ({ ...old, ...change }));
   const patchLine = (key: number, change: (line: f.FormLine) => f.FormLine): void =>
@@ -60,27 +127,48 @@ export function BillingScreen({ today }: { today: string }) {
     const ticket = ++lotRequest.current;
     patch({ lots: [], returns: {} });
     if (!customer) return;
-    const result = await api<{ rows: JobWorkLot[] }>(`/api/job-work?customer_id=${customer.id}&open=true`);
-    if (ticket === lotRequest.current && result.ok) patch({ lots: result.data.rows });
+    const lots = await openLots(customer.id);
+    if (ticket === lotRequest.current) patch({ lots });
   }
+
+  // A restored bill may be days old: take today's tax facts and open lots, keep what was typed.
+  const restoredCustomer = restoredAt === null && !opened.error ? null : opened.form.customer;
+  useEffect(() => {
+    let left = false;
+    void (async () => {
+      const company = await api<unknown>('/api/company');
+      if (!left && company.ok) setNoCompany(company.data === null);
+      if (!restoredCustomer) return;
+      const [fresh, lots] = await Promise.all([api<Customer>(`/api/customers/${restoredCustomer.id}`), openLots(restoredCustomer.id)]);
+      if (left) return;
+      setForm((old) => {
+        if (old.customer?.id !== restoredCustomer.id) return old;
+        const kept = old.lots.filter((lot) => old.returns[lot.id] && !lots.some((now) => now.id === lot.id));
+        return { ...old, customer: fresh.ok ? fresh.data : old.customer, lots: [...lots, ...kept] };
+      });
+    })();
+    return () => {
+      left = true;
+    };
+  }, [restoredCustomer]);
 
   function pickCustomer(customer: Customer): void {
     patch({ customer, customerText: customer.name, dueDate: null });
     void loadLots(customer);
   }
 
-  function startNew(): void {
+  async function startNew(): Promise<void> {
     lotRequest.current += 1;
-    setForm(f.newBill('', istDate(new Date()), form.type));
-    setIssued(null);
-    setError(null);
+    await saver.stop();
+    if (!saved) await engine?.deleteDraft(form.tempId);
+    onNew(form.type);
   }
 
   function clear(): void {
-    if (form.lines.every(f.isBlank) || window.confirm('Clear this bill? It has not been saved.')) startNew();
+    if (f.isEmptyForm(form) || window.confirm('Clear this bill? It has not been saved.')) void startNew();
   }
 
-  useAltN(() => (issued ? startNew() : clear()));
+  useAltN(() => (saved ? void startNew() : clear()));
 
   const preview = f.previewBill(form);
   const bill = 'bill' in preview ? preview.bill : null;
@@ -91,38 +179,51 @@ export function BillingScreen({ today }: { today: string }) {
 
   async function save(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (busy || issued) return;
+    if (busy || saved) return;
     if (!bill) return setError('problem' in preview ? preview.problem : 'Check the bill');
-    // One id per bill, kept across retries, so a lost reply can never issue it twice.
-    const tempId = form.tempId || mintId();
-    const ready = { ...form, tempId };
-    setForm(ready);
     setBusy(true);
     setError(null);
-    const result = await api<Issued>('/api/invoices/sync', 'POST', f.toDraft(ready, bill));
+    const draft = f.toDraft(form, bill);
+    if (engine) {
+      try {
+        await saver.stop();
+        await engine.enqueue({ form, draft, customer: form.customer?.name ?? '', total_paise: bill.detail.amounts.grand_total_paise });
+        setSaved({ issued: null });
+        void engine.syncNow();
+        return;
+      } catch {
+        // Disk full or store broken: fall through and send it straight away.
+      }
+    }
+    const result = await api<Issued>('/api/invoices/sync', 'POST', draft);
     setBusy(false);
-    if (result.ok) setIssued(result.data);
+    if (result.ok) setSaved({ issued: result.data });
     else setError(result.message);
   }
 
-  if (issued) {
+  if (saved) {
     return (
-      <section className="card mx-auto grid max-w-2xl gap-4 text-center" aria-live="polite">
-        <p className="text-lg text-muted">Bill saved</p>
-        <p className="text-4xl font-bold">{issued.invoice_no}</p>
-        <p className="text-xl">Delivery challan {issued.dc_no}</p>
-        <div className="flex flex-wrap justify-center gap-3">
-          <Link ref={printLink} className="btn btn-primary" href={`/invoices/${issued.invoice_id}/print?paper=a4`}>Print A4</Link>
-          <Link className="btn" href={`/invoices/${issued.invoice_id}/print?paper=a5`}>Print A5</Link>
-          <Link className="btn" href={`/invoices/${issued.invoice_id}`}>Open bill</Link>
-          <button className="btn" type="button" onClick={startNew}>New bill (Alt+N)</button>
-        </div>
-      </section>
+      <SavedBill
+        tempId={form.tempId} engine={engine} issued={saved.issued} total={amounts?.grand_total_paise ?? null} onNew={() => void startNew()}
+        onRejected={async (message) => {
+          await engine?.reopen(form.tempId);
+          onReopen(form, message);
+        }}
+      />
     );
   }
 
   return (
     <form onSubmit={(event) => void save(event)} onKeyDown={enterAdvances} aria-label="New bill" className="grid gap-4 pb-28">
+      {engine ? null : <Notice tone="warn">This browser cannot store bills: an unsaved bill is lost if the PC stops. Use a normal window, not a private one.</Notice>}
+      {noCompany ? <Notice tone="warn">Bills carry your company details. <Link className="underline" href="/company">Fill them in first</Link>.</Notice> : null}
+      {restored ? (
+        <p role="status" className="flex flex-wrap items-center gap-3 rounded-md border border-accent px-3 py-2">
+          <span className="font-semibold">Restored the bill you were typing{restoredAt ? ` (${formatTime(restoredAt)})` : ''}.</span>
+          <button type="button" className="underline" onClick={() => setRestored(false)}>OK</button>
+          <button type="button" className="underline" onClick={clear}>Start fresh</button>
+        </p>
+      ) : null}
       <section className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-[auto_2fr_1fr_1fr]">
         <fieldset>
           <legend className="mb-1 text-sm font-semibold">Bill</legend>

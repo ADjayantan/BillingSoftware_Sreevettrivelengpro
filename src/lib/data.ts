@@ -84,6 +84,45 @@ export async function listInvoices(db: SupabaseClient, q: string, page: number):
   return toPage(inv.invoiceListRow, must(await request), page);
 }
 
+/** The invoice a queued bill became, if it did. */
+export async function findIssued(db: SupabaseClient, tempId: string): Promise<inv.IssuedBill | null> {
+  const rows = must(await db.from('invoices').select('id,invoice_no,grand_total::text').eq('client_temp_id', tempId).limit(1));
+  const [found] = parseRow(z.array(z.object({ id: z.uuid(), invoice_no: z.string(), grand_total: z.string() })), rows);
+  if (found === undefined) return null;
+  const challans = must(await db.from('deliveries').select('dc_no').eq('invoice_id', found.id).order('created_at').limit(1));
+  const dcNo = parseRow(z.array(z.object({ dc_no: z.string() })), challans)[0]?.dc_no ?? null;
+  return { invoice_id: found.id, invoice_no: found.invoice_no, dc_no: dcNo, grand_total: found.grand_total };
+}
+
+export interface MasterPage {
+  rows: unknown[];
+  /** Pass back as `after`; null when the pass is complete. */
+  next: string | null;
+  as_of: string;
+}
+
+type MasterKind = 'customers' | 'stud_items' | 'lots';
+const MASTERS: Record<MasterKind, { table: string; columns: string; schema: z.ZodType<{ id: string }>; live: [string, string | boolean] }> = {
+  customers: { table: 'customers', columns: CUSTOMER_COLUMNS, schema: m.customerRow, live: ['is_active', true] },
+  stud_items: { table: 'stud_items', columns: STUD_COLUMNS, schema: m.studItemRow, live: ['is_active', true] },
+  lots: { table: 'job_work_ledger', columns: LOT_COLUMNS, schema: m.jobWorkRow, live: ['status', 'open'] },
+};
+
+/**
+ * One page for the device's offline copy, walked by id so concurrent edits cannot shift rows
+ * between pages. Without `since`: what is live now. With it: everything touched since, so
+ * the device also learns what was deactivated or closed.
+ */
+export async function listMasters(db: SupabaseClient, kind: MasterKind, since: string | null, after: string | null): Promise<MasterPage> {
+  const asOf = new Date().toISOString();
+  const { table, columns, schema, live } = MASTERS[kind];
+  let request = db.from(table).select(columns).order('id').limit(PAGE_SIZE);
+  request = since ? request.gte('updated_at', since) : request.eq(live[0], live[1]);
+  if (after) request = request.gt('id', after);
+  const rows = parseRow(z.array(schema), must(await request));
+  return { rows, next: rows.length === PAGE_SIZE ? (rows.at(-1)?.id ?? null) : null, as_of: asOf };
+}
+
 export async function getCompany(db: SupabaseClient): Promise<m.Company | null> {
   const { data, error } = await db.from('company_profile').select(COMPANY_COLUMNS).limit(1);
   if (error) throw error;

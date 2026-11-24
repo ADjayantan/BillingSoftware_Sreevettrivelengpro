@@ -2,12 +2,12 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { searchCustomers } from '@/components/customer-search';
 import { enterAdvances } from '@/components/enter-advance';
 import { Field, Notice } from '@/components/field';
 import { Typeahead } from '@/components/typeahead';
 import { useAltN } from '@/components/use-alt-n';
 import { api } from '@/lib/api-client';
+import { searchCustomers } from '@/lib/master-search';
 import { formatDate, istDate } from '@/lib/india';
 import type { JobWorkLot } from '@/lib/schemas/masters';
 

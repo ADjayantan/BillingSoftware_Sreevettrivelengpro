@@ -33,6 +33,8 @@ function where(url: URL, params: unknown[]): string {
     const value = raw.slice(dot + 1);
     if (operator === 'is' && value === 'null') clauses.push(`${ident(key)} is null`);
     else if (operator === 'eq') clauses.push(`${ident(key)}::text = $${params.push(value)}`);
+    else if (operator === 'gt') clauses.push(`${ident(key)} > $${params.push(value)}`);
+    else if (operator === 'gte') clauses.push(`${ident(key)} >= $${params.push(value)}`);
     else if (operator === 'ilike') clauses.push(`${ident(key)} ilike $${params.push(value)}`);
     else throw new Error(`unexpected filter ${key}=${raw}`);
   }

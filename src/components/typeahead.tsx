@@ -1,14 +1,9 @@
 'use client';
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import type { Option } from '@/lib/master-search';
 import { focusNext } from './enter-advance';
-
-export interface Option<T> {
-  key: string;
-  label: string;
-  detail?: string;
-  value: T;
-}
+import { useConnection } from './use-connection';
 
 /** Type, arrow, Enter. Asks the server as you type, so no master list sits in memory. */
 export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFocus = false, inputLabel, onEmptyEnter }: {
@@ -23,6 +18,7 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
   onEmptyEnter?: () => boolean;
 }) {
   const listId = useId();
+  const offline = useConnection() === 'offline';
   const [options, setOptions] = useState<Option<T>[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -137,6 +133,7 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
               {option.detail ? <span className="block text-sm opacity-80">{option.detail}</span> : null}
             </li>
           ))}
+          {offline ? <li role="presentation" className="border-t border-line px-3 py-1 text-sm text-muted">Offline Mode · from this PC</li> : null}
         </ul>
       ) : null}
     </div>

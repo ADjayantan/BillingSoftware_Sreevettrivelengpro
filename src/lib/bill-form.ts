@@ -71,6 +71,29 @@ export function newBill(tempId: string, today: string, type: BillType = 'supply'
 
 export const isBlank = (line: FormLine): boolean => line.text.trim() === '' && line.quantity === '' && line.rate === '';
 
+/** Nothing typed yet: not worth keeping as a draft. */
+export const isEmptyForm = (form: BillForm): boolean =>
+  form.customer === null && form.lines.every(isBlank) &&
+  [form.customerText, form.packing, form.freight, form.paid, form.notes, form.transport.vehicle_no, form.transport.driver_name, form.transport.driver_phone, form.transport.lr_number, form.transport.delivery_address].every((text) => text.trim() === '');
+
+/** A draft from disk, perhaps written by an older version: complete, or null if unusable. */
+export function reviveForm(stored: unknown, today: string): BillForm | null {
+  if (typeof stored !== 'object' || stored === null) return null;
+  const form = stored as Partial<BillForm>;
+  if (typeof form.tempId !== 'string' || !/^OFFLINE-[0-9a-f-]{36}$/.test(form.tempId)) return null;
+  if (form.type !== 'supply' && form.type !== 'job_work') return null;
+  const base = newBill(form.tempId, today, form.type);
+  const lines = (Array.isArray(form.lines) ? form.lines : []).map((line, i) => ({ ...blankLine(i + 1, base.type), ...line }));
+  return {
+    ...base, ...form,
+    today,
+    lines: withTrailingBlank(lines, base.type),
+    transport: { ...base.transport, ...form.transport },
+    lots: Array.isArray(form.lots) ? form.lots : [],
+    returns: form.returns ?? {},
+  };
+}
+
 /** There is always one empty line to type into. */
 export function withTrailingBlank(lines: FormLine[], type: BillType): FormLine[] {
   const last = lines.at(-1);

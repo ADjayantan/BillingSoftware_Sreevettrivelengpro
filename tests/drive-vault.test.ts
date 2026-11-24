@@ -10,19 +10,23 @@ import {
   buildDeterministicPdfName,
   clearDriveCache,
   createZipArchive,
+  getDriveAccessToken,
   getDriveCredentials,
   getVaultPeriodFolders,
+  isDriveConfigured,
   MAX_DELIVERY_PROOF_BYTES,
   renderPrintDocumentsToPdf,
   retryPendingDriveArchives,
   rowsToCsv,
   uploadDeliveryProofToDrive,
-  type DriveCredentials,
+  type OAuthCredentials,
+  type ServiceAccountCredentials,
 } from '@/lib/drive-backup';
 import { getInvoice } from '@/lib/data';
 import { buildDocuments } from '@/lib/print-documents';
 import { ACTORS, createTestDb, intraStatePayload, seedMasterData, syncInvoice, type MasterData } from './db/harness';
 import { pgliteFetch } from './support/postgrest';
+import { consentUrl, readEnv, upsertEnv } from '../scripts/drive-connect';
 
 let db: PGlite;
 let md: MasterData;
@@ -35,7 +39,7 @@ const { privateKey: TEST_PEM_KEY } = generateKeyPairSync('rsa', {
 });
 
 const ROOT_VAULT_ID = '1VaultRootFolderId_CompanyBilling';
-const TEST_CREDS: DriveCredentials = {
+const TEST_CREDS: ServiceAccountCredentials = {
   clientEmail: 'studflow-vault@test-project.iam.gserviceaccount.com',
   privateKey: TEST_PEM_KEY,
   rootFolderId: ROOT_VAULT_ID,
@@ -241,7 +245,7 @@ describe('Task B — Isolated Google Drive Vault & Weekly Disaster Backup', () =
       GOOGLE_DRIVE_PRIVATE_KEY: TEST_CREDS.privateKey.replace(/\n/g, '\\n'),
     });
     expect(fromPair.rootFolderId).toBe(ROOT_VAULT_ID);
-    expect(fromPair.clientEmail).toBe(TEST_CREDS.clientEmail);
+    expect(fromPair).toMatchObject({ clientEmail: TEST_CREDS.clientEmail });
 
     const fromJson = getDriveCredentials({
       NODE_ENV: 'test',
@@ -251,7 +255,7 @@ describe('Task B — Isolated Google Drive Vault & Weekly Disaster Backup', () =
         private_key: TEST_CREDS.privateKey,
       }),
     });
-    expect(fromJson.clientEmail).toBe(TEST_CREDS.clientEmail);
+    expect(fromJson).toMatchObject({ clientEmail: TEST_CREDS.clientEmail });
 
     expect(() => getDriveCredentials({ NODE_ENV: 'test' })).toThrow(/GOOGLE_DRIVE_ROOT_FOLDER_ID/);
   });
@@ -499,5 +503,72 @@ describe('Task B — Isolated Google Drive Vault & Weekly Disaster Backup', () =
     await expect(
       ensureVaultFolderPath(['../Escape_Vault'], TEST_CREDS, 'fake-token', fakeDrive.fetch),
     ).rejects.toThrow(/Invalid Drive vault folder segment/);
+  });
+});
+
+describe('Drive with a personal Google account (OAuth)', () => {
+  const OAUTH: OAuthCredentials = { clientId: 'client-1.apps.googleusercontent.com', clientSecret: 's3cret', refreshToken: 'refresh-1', rootFolderId: ROOT_VAULT_ID };
+  const env = {
+    NODE_ENV: 'test' as const,
+    GOOGLE_DRIVE_ROOT_FOLDER_ID: ROOT_VAULT_ID,
+    GOOGLE_DRIVE_OAUTH_CLIENT_ID: OAUTH.clientId,
+    GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: OAUTH.clientSecret,
+    GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN: OAUTH.refreshToken,
+  };
+
+  it('reads the sign-in, prefers it, and refuses half a setup', () => {
+    expect(getDriveCredentials(env)).toEqual(OAUTH);
+    expect(getDriveCredentials({ ...env, GOOGLE_DRIVE_CLIENT_EMAIL: TEST_CREDS.clientEmail, GOOGLE_DRIVE_PRIVATE_KEY: TEST_CREDS.privateKey })).toEqual(OAUTH);
+    const half = { ...env, GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN: ' ', GOOGLE_DRIVE_CLIENT_EMAIL: TEST_CREDS.clientEmail, GOOGLE_DRIVE_PRIVATE_KEY: TEST_CREDS.privateKey };
+    expect(() => getDriveCredentials(half)).toThrow('GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN missing');
+    expect(() => getDriveCredentials(half)).not.toThrow(OAUTH.clientSecret);
+    expect(isDriveConfigured(env)).toBe(true);
+    expect(isDriveConfigured({ ...env, GOOGLE_DRIVE_ROOT_FOLDER_ID: '' })).toBe(false);
+    expect(isDriveConfigured({ ...env, GOOGLE_DRIVE_OAUTH_CLIENT_SECRET: '' })).toBe(false);
+    expect(isDriveConfigured({ NODE_ENV: 'test' })).toBe(false);
+  });
+
+  it('renews with the stored permission, caches per account, and explains a removed permission', async () => {
+    const bodies: URLSearchParams[] = [];
+    const google: typeof fetch = async (_input, init) => {
+      bodies.push(new URLSearchParams(String(init?.body)));
+      return Response.json({ access_token: `token-${bodies.length}`, expires_in: 3600 });
+    };
+    expect(await getDriveAccessToken(OAUTH, google)).toBe('token-1');
+    expect(await getDriveAccessToken(OAUTH, google)).toBe('token-1');
+    expect(Object.fromEntries(bodies[0] ?? [])).toEqual({ grant_type: 'refresh_token', client_id: OAUTH.clientId, client_secret: 's3cret', refresh_token: 'refresh-1' });
+    // Reconnected, or another account: never the first one's token.
+    expect(await getDriveAccessToken({ ...OAUTH, refreshToken: 'refresh-2' }, google)).toBe('token-2');
+    expect(await getDriveAccessToken(TEST_CREDS, google)).toBe('token-3');
+    expect(bodies[2]?.get('grant_type')).toBe('urn:ietf:params:oauth:grant-type:jwt-bearer');
+    clearDriveCache();
+    const gone: typeof fetch = async () => Response.json({ error: 'invalid_grant' }, { status: 400 });
+    await expect(getDriveAccessToken(OAUTH, gone)).rejects.toThrow(/drive-connect/);
+  });
+
+  it('archives an invoice and its challan into the vault', async () => {
+    const issued = await syncInvoice(db, ACTORS.staff, intraStatePayload(md));
+    const result = await archiveInvoiceById(supabaseService, issued.invoice_id, { creds: OAUTH, fetchImpl: fakeDrive.fetch });
+    expect(result).toMatchObject({ synced: true, driveSyncPending: false });
+    expect(fakeDrive.pathOf(result.invoicePdf?.fileId ?? '')).toMatch(/^Company_Billing_Vault\/FY_2026-27\/2026-11\/Tax_Invoices\//);
+  });
+});
+
+describe('scripts/drive-connect.ts', () => {
+  it('asks only for files the app itself creates, with PKCE and a state', () => {
+    const url = new URL(consentUrl({ clientId: 'c', redirectUri: 'http://127.0.0.1:53682/callback', state: 'st', challenge: 'ch' }));
+    expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth');
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      scope: 'https://www.googleapis.com/auth/drive.file', access_type: 'offline', prompt: 'consent', response_type: 'code', state: 'st', code_challenge: 'ch', code_challenge_method: 'S256',
+    });
+    expect(url.href).not.toMatch(/secret/i);
+  });
+
+  it('changes only its own lines of the env file', () => {
+    const file = '# note\r\nA=1\r\nGOOGLE_DRIVE_ROOT_FOLDER_ID=\r\nCRON_SECRET=keep\r\n';
+    const next = upsertEnv(file, { GOOGLE_DRIVE_ROOT_FOLDER_ID: 'folder_12345', GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN: '1//0a$&b' });
+    expect(next).toBe('# note\r\nA=1\r\nGOOGLE_DRIVE_ROOT_FOLDER_ID=folder_12345\r\nCRON_SECRET=keep\r\nGOOGLE_DRIVE_OAUTH_REFRESH_TOKEN=1//0a$&b\r\n');
+    expect(readEnv(next)).toMatchObject({ A: '1', CRON_SECRET: 'keep', GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN: '1//0a$&b' });
+    expect(() => upsertEnv(file, { A: 'x\ny' })).toThrow();
   });
 });

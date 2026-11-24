@@ -13,12 +13,25 @@ export type VaultCategory =
   | 'Job_Work_Bills'
   | 'Delivery_Proofs';
 
-export interface DriveCredentials {
-  clientEmail: string;
-  privateKey: string;
+interface VaultLocation {
   rootFolderId: string;
   sharedDriveId?: string;
 }
+
+/** A Google Workspace robot. It owns no storage, so the vault must be in a Shared Drive. */
+export interface ServiceAccountCredentials extends VaultLocation {
+  clientEmail: string;
+  privateKey: string;
+}
+
+/** A person's own Google account (plain Gmail works): files count against their storage. */
+export interface OAuthCredentials extends VaultLocation {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+}
+
+export type DriveCredentials = ServiceAccountCredentials | OAuthCredentials;
 
 export interface DriveUploadResult {
   fileId: string;
@@ -82,7 +95,7 @@ const driveFileSchema = z.object({
 // In-memory cache of resolved vault subfolder IDs and OAuth access token
 const folderCache = new Map<string, string>();
 const knownVaultFolderIds = new Set<string>();
-let cachedToken: { token: string; expiresAt: number; clientEmail: string } | null = null;
+let cachedToken: { token: string; expiresAt: number; identity: string } | null = null;
 
 export function clearDriveCache(): void {
   folderCache.clear();
@@ -90,16 +103,41 @@ export function clearDriveCache(): void {
   cachedToken = null;
 }
 
+const OAUTH_VARS = ['GOOGLE_DRIVE_OAUTH_CLIENT_ID', 'GOOGLE_DRIVE_OAUTH_CLIENT_SECRET', 'GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN'] as const;
+
+/** Is Drive set up at all? Billing works without it; archives then wait. */
+export function isDriveConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!env.GOOGLE_DRIVE_ROOT_FOLDER_ID?.trim()) return false;
+  return (
+    OAUTH_VARS.every((name) => env[name]?.trim()) ||
+    Boolean(env.GOOGLE_DRIVE_CLIENT_EMAIL?.trim() && env.GOOGLE_DRIVE_PRIVATE_KEY?.trim()) ||
+    Boolean(env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON?.trim())
+  );
+}
+
 /**
  * Loads and validates server-only Google Drive credentials scoped strictly to
  * GOOGLE_DRIVE_ROOT_FOLDER_ID (Company_Billing_Vault).
- * Supports both GOOGLE_DRIVE_CLIENT_EMAIL + GOOGLE_DRIVE_PRIVATE_KEY and
+ * GOOGLE_DRIVE_OAUTH_* (a person's account, from scripts/drive-connect.ts) wins when set.
+ * Otherwise supports both GOOGLE_DRIVE_CLIENT_EMAIL + GOOGLE_DRIVE_PRIVATE_KEY and
  * GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON from specs/golive-runbook.md.
  */
 export function getDriveCredentials(env: NodeJS.ProcessEnv = process.env): DriveCredentials {
   const rootFolderId = env.GOOGLE_DRIVE_ROOT_FOLDER_ID?.trim() ?? '';
   if (!folderIdPattern.test(rootFolderId)) {
     throw new Error('GOOGLE_DRIVE_ROOT_FOLDER_ID is missing or malformed.');
+  }
+
+  const sharedDriveId = env.GOOGLE_DRIVE_SHARED_DRIVE_ID?.trim() || undefined;
+  const location: VaultLocation = { rootFolderId, ...(sharedDriveId ? { sharedDriveId } : {}) };
+
+  const [clientId, clientSecret, refreshToken] = OAUTH_VARS.map((name) => env[name]?.trim() ?? '');
+  if (clientId || clientSecret || refreshToken) {
+    // Half a setup must not quietly fall back to another account's Drive.
+    const missing = OAUTH_VARS.filter((name) => !env[name]?.trim());
+    if (!clientId || !clientSecret || !refreshToken) throw new Error(`Google Drive sign-in is incomplete: ${missing.join(', ')} missing.`);
+    knownVaultFolderIds.add(rootFolderId);
+    return { ...location, clientId, clientSecret, refreshToken };
   }
 
   let clientEmail = env.GOOGLE_DRIVE_CLIENT_EMAIL?.trim() ?? '';
@@ -129,14 +167,8 @@ export function getDriveCredentials(env: NodeJS.ProcessEnv = process.env): Drive
   }
 
   knownVaultFolderIds.add(rootFolderId);
-  const sharedDriveId = env.GOOGLE_DRIVE_SHARED_DRIVE_ID?.trim() || undefined;
 
-  return {
-    clientEmail,
-    privateKey: normalizedKey,
-    rootFolderId,
-    ...(sharedDriveId ? { sharedDriveId } : {}),
-  };
+  return { ...location, clientEmail, privateKey: normalizedKey };
 }
 
 /**
@@ -218,52 +250,60 @@ function base64Url(input: string | Buffer): string {
   return Buffer.from(input).toString('base64url');
 }
 
+/** The service account's signed request for a token, or the person's stored permission. */
+function tokenRequest(creds: DriveCredentials, nowMs: number): Record<string, string> {
+  if ('refreshToken' in creds) {
+    return {
+      grant_type: 'refresh_token',
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
+      refresh_token: creds.refreshToken,
+    };
+  }
+  const iat = Math.floor(nowMs / 1000);
+  const header = base64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claimSet = base64Url(
+    JSON.stringify({ iss: creds.clientEmail, scope: DRIVE_SCOPE, aud: OAUTH_TOKEN_URL, iat, exp: iat + 3600 }),
+  );
+  const unsignedJwt = `${header}.${claimSet}`;
+  const signer = createSign('RSA-SHA256');
+  signer.update(unsignedJwt);
+  signer.end();
+  return {
+    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    assertion: `${unsignedJwt}.${signer.sign(creds.privateKey, 'base64url')}`,
+  };
+}
+
+/** Whose token is cached. Never the secret itself. */
+const identityOf = (creds: DriveCredentials): string =>
+  'refreshToken' in creds
+    ? `oauth:${creds.clientId}:${createHash('sha256').update(creds.refreshToken).digest('hex')}`
+    : `service:${creds.clientEmail}`;
+
 /**
- * Signs a service-account JWT and exchanges it for a short-lived Google Drive OAuth2 access token.
+ * Exchanges the credentials for a short-lived Google Drive OAuth2 access token.
  */
 export async function getDriveAccessToken(
   creds: DriveCredentials,
   fetchImpl: typeof fetch = fetch,
   nowMs = Date.now(),
 ): Promise<string> {
-  if (
-    cachedToken &&
-    cachedToken.clientEmail === creds.clientEmail &&
-    cachedToken.expiresAt - 60_000 > nowMs
-  ) {
+  const identity = identityOf(creds);
+  if (cachedToken && cachedToken.identity === identity && cachedToken.expiresAt - 60_000 > nowMs) {
     return cachedToken.token;
   }
-
-  const iat = Math.floor(nowMs / 1000);
-  const exp = iat + 3600;
-  const header = base64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const claimSet = base64Url(
-    JSON.stringify({
-      iss: creds.clientEmail,
-      scope: DRIVE_SCOPE,
-      aud: OAUTH_TOKEN_URL,
-      iat,
-      exp,
-    }),
-  );
-
-  const unsignedJwt = `${header}.${claimSet}`;
-  const signer = createSign('RSA-SHA256');
-  signer.update(unsignedJwt);
-  signer.end();
-  const signature = signer.sign(creds.privateKey, 'base64url');
-  const assertion = `${unsignedJwt}.${signature}`;
 
   const response = await fetchImpl(OAUTH_TOKEN_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion,
-    }).toString(),
+    body: new URLSearchParams(tokenRequest(creds, nowMs)).toString(),
   });
 
   if (!response.ok) {
+    if ('refreshToken' in creds && response.status === 400) {
+      throw new Error('Google Drive permission has expired or was removed. Run scripts/drive-connect.ts again.');
+    }
     throw new Error(`Google OAuth token exchange failed with HTTP ${response.status}`);
   }
 
@@ -274,7 +314,7 @@ export async function getDriveAccessToken(
   cachedToken = {
     token: parsed.access_token,
     expiresAt: nowMs + parsed.expires_in * 1000,
-    clientEmail: creds.clientEmail,
+    identity,
   };
   return parsed.access_token;
 }
@@ -805,15 +845,7 @@ export function triggerInvoiceArchiveAsync(
   invoiceId: string,
   options: { creds?: DriveCredentials; fetchImpl?: typeof fetch } = {},
 ): Promise<InvoiceArchiveResult | null> {
-  const hasEnv =
-    Boolean(options.creds) ||
-    Boolean(
-      process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID?.trim() &&
-        ((process.env.GOOGLE_DRIVE_CLIENT_EMAIL?.trim() && process.env.GOOGLE_DRIVE_PRIVATE_KEY?.trim()) ||
-          process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON?.trim()),
-    );
-
-  if (!hasEnv) {
+  if (!options.creds && !isDriveConfigured()) {
     return Promise.resolve(null);
   }
 

@@ -15,7 +15,7 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
 - **Next.js App Router on Vercel.** Server Components by default; `'use client'` only for interactive leaves (forms, Dexie, voice input). Data reads happen on the server; mutations go through Route Handlers (`src/app/api/**/route.ts`) or Server Actions.
 - **Supabase** = Postgres + Auth + RLS. All durable data lives in Postgres; the browser only holds drafts and the unsynced queue.
 - **AI** = Gemini Flash, server routes only, JSON mode + Zod. No local LLM, no client-side ML/WASM models.
-- **Files** = PDFs rendered server-side, archived to Google Drive (`/StudFlow/<FY>/<MM>/…`); weekly DB backup to Drive.
+- **Files** = PDFs rendered server-side, archived to Google Drive (`/StudFlow/<FY>/<MM>/…`); weekly DB backup to Drive. Two sign-ins: `GOOGLE_DRIVE_OAUTH_*` (a person's account, `drive.file` scope, made by `node scripts/drive-connect.ts`; wins when set) or a service account (Shared Drive only). Archiving starts in `after()`.
 - Layout:
   ```
   src/app/                  routes, layouts, route handlers

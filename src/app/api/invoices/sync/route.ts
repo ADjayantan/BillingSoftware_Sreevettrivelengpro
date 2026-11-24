@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { after } from 'next/server';
 import { z } from 'zod';
 import { ApiError, body, must, parse, parseRow, route, toApiError } from '@/lib/api/http';
 import { buildSyncPayload, composeBill } from '@/lib/bill-draft';
@@ -8,6 +9,16 @@ import { formatInr } from '@/lib/money';
 import { billDraft, clientTempId, syncResult } from '@/lib/schemas/invoices';
 
 const taxFacts = z.object({ state_code: z.string(), is_sez: z.boolean() });
+
+/** The bill is answered first. after() keeps the server alive until the upload is done. */
+function archiveLater(supabase: SupabaseClient, invoiceId: string): void {
+  const archive = () => triggerInvoiceArchiveAsync(supabase, invoiceId);
+  try {
+    after(archive);
+  } catch {
+    void archive(); // not inside a Next.js request
+  }
+}
 
 async function issue(supabase: SupabaseClient, raw: unknown): Promise<z.output<typeof syncResult> | undefined> {
   const draft = parse(billDraft, raw);
@@ -23,7 +34,7 @@ async function issue(supabase: SupabaseClient, raw: unknown): Promise<z.output<t
   const rows = must(await supabase.rpc('sync_invoice', { p_payload: buildSyncPayload(draft, bill) }));
   const issued = parseRow(z.array(syncResult).length(1), rows)[0];
   if (issued && !issued.replayed) {
-    void triggerInvoiceArchiveAsync(supabase, issued.invoice_id);
+    archiveLater(supabase, issued.invoice_id);
   }
   return issued;
 }

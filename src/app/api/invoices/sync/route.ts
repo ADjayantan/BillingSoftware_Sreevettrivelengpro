@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ApiError, body, must, parse, parseRow, route, toApiError } from '@/lib/api/http';
 import { buildSyncPayload, composeBill } from '@/lib/bill-draft';
 import { findIssued } from '@/lib/data';
+import { triggerInvoiceArchiveAsync } from '@/lib/drive-backup';
 import { formatInr } from '@/lib/money';
 import { billDraft, clientTempId, syncResult } from '@/lib/schemas/invoices';
 
@@ -20,7 +21,11 @@ async function issue(supabase: SupabaseClient, raw: unknown): Promise<z.output<t
     throw new ApiError(409, 'TOTAL_CHANGED', `The total is now ${formatInr(total)}. Check the bill and save again.`);
   }
   const rows = must(await supabase.rpc('sync_invoice', { p_payload: buildSyncPayload(draft, bill) }));
-  return parseRow(z.array(syncResult).length(1), rows)[0];
+  const issued = parseRow(z.array(syncResult).length(1), rows)[0];
+  if (issued && !issued.replayed) {
+    void triggerInvoiceArchiveAsync(supabase, issued.invoice_id);
+  }
+  return issued;
 }
 
 /**

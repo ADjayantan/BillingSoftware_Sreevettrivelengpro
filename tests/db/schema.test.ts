@@ -834,7 +834,18 @@ describe('issued-invoice guard', () => {
 
   // Catalog-driven: a column added later must be frozen, or listed here on purpose.
   it('rejects changes to billed amounts, party and numbering after sync', async () => {
-    const editable = ['amount_paid', 'payment_status', 'pdf_drive_url', 'cancelled_at', 'cancellation_reason', 'updated_at'];
+    const editable = [
+      'amount_paid',
+      'payment_status',
+      'pdf_drive_url',
+      'drive_sync_pending',
+      'drive_file_id',
+      'dc_drive_url',
+      'dc_drive_file_id',
+      'cancelled_at',
+      'cancellation_reason',
+      'updated_at',
+    ];
     const { rows } = await ctx.db.query<{ col: string; type: string }>(`
       select column_name as col, data_type as type from information_schema.columns
        where table_schema = 'public' and table_name = 'invoices' order by ordinal_position`);

@@ -11,6 +11,9 @@ const AUTH_PATIENCE = 6000;
 /** The one page that works without the cloud: static, so letting it through shows no data. */
 const SHELL = '/billing';
 
+/** Machine-scheduled cron endpoints authenticate strictly via Authorization: Bearer CRON_SECRET in their handlers. */
+const CRON_PATHS = new Set(['/api/cron/weekly-backup', '/api/cron/metal-rates', '/api/cron/reminders']);
+
 const OUTAGE_PAGE = `<!doctype html><html lang="en-IN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>StudFlow · Cloud not answering</title>
 <style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-content:center;gap:16px;padding:16px;text-align:center;font:18px/1.5 system-ui,sans-serif}h1,p{margin:0}a{display:inline-block;padding:12px 20px;border:1px solid;border-radius:8px;font-weight:600;color:inherit;text-decoration:none}</style>
 <h1>The cloud is not answering</h1><p>Nothing is lost. Billing works meanwhile.</p><p><a href="${SHELL}">Open billing</a> <a href="">Try again</a></p></html>`;
@@ -35,6 +38,9 @@ async function withPatience<T>(work: Promise<T>): Promise<T | 'late'> {
  * security boundary: every row is still guarded by RLS and the access list.
  */
 export async function proxy(request: NextRequest): Promise<NextResponse> {
+  if (CRON_PATHS.has(request.nextUrl.pathname)) {
+    return NextResponse.next({ request });
+  }
   let response = NextResponse.next({ request });
   let signedIn = false;
   let unreachable = false;

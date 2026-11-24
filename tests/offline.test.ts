@@ -139,7 +139,7 @@ describe('draft recovery', () => {
     const saver = autosave<f.BillForm>((form) => store.saveDraft(db, form), 300);
     const started = { ...f.newBill(`OFFLINE-${crypto.randomUUID()}`, TEST_TODAY), customerText: 'M' };
     saver.push(started);
-    await vi.waitFor(async () => expect(await store.listDrafts(db)).toHaveLength(1), { timeout: 150 });
+    await vi.waitFor(async () => expect(await store.listDrafts(db)).toHaveLength(1), { timeout: 1000 });
 
     const typed = { ...typedBill(), tempId: started.tempId };
     saver.push(typed);

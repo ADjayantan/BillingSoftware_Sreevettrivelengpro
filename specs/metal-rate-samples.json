@@ -1,0 +1,620 @@
+{
+  "fixture_version": 1,
+  "context": {
+    "basis": "Independent demo inputs received on 19 November 2026 in Asia/Kolkata. Reset to the same 18 November close and active rules before each case.",
+    "baseline_source": "specs/seed-data.json, metal_rates on 2026-11-18. scripts/seed.ts stores Brass as BRASS.",
+    "baseline_date": "2026-11-18",
+    "currency": "INR",
+    "normalized_unit": "INR/kg",
+    "yesterday_rate_per_kg": {
+      "MS": "57.75",
+      "EN8": "83.00",
+      "EN19": "116.50",
+      "SS 304": "212.00",
+      "SS 316": "324.00",
+      "BRASS": "751.50"
+    },
+    "owner_alert_rules": [
+      {
+        "material_grade": "MS",
+        "threshold_rs_per_kg": "4.00",
+        "telegram_chat_id": "-1000000000000",
+        "is_active": true
+      },
+      {
+        "material_grade": "EN8",
+        "threshold_rs_per_kg": "3.00",
+        "telegram_chat_id": "-1000000000000",
+        "is_active": true
+      },
+      {
+        "material_grade": "EN19",
+        "threshold_rs_per_kg": "4.00",
+        "telegram_chat_id": "-1000000000000",
+        "is_active": true
+      },
+      {
+        "material_grade": "SS 304",
+        "threshold_rs_per_kg": "5.00",
+        "telegram_chat_id": "-1000000000000",
+        "is_active": true
+      },
+      {
+        "material_grade": "SS 316",
+        "threshold_rs_per_kg": "6.00",
+        "telegram_chat_id": "-1000000000000",
+        "is_active": true
+      },
+      {
+        "material_grade": "BRASS",
+        "threshold_rs_per_kg": "8.00",
+        "telegram_chat_id": "-1000000000000",
+        "is_active": true
+      }
+    ],
+    "delivery": "Use a Telegram sender stub for the fixture chat ID. Production uses the active rules configured by the owner.",
+    "grade_order": [
+      "MS",
+      "EN8",
+      "EN19",
+      "SS 304",
+      "SS 316",
+      "BRASS"
+    ]
+  },
+  "contract": {
+    "extraction": "The model transcribes grade, quote kind, original unit and amount from dealer text. Validate its JSON with Zod before normalizing. Emit recognized grades in grade_order. A list header applies to its entries. All sample prices use INR.",
+    "missing_prices": "Omitted grades yield no row. An explicit unchanged or relative-to-yesterday statement needs yesterday’s close for that grade. Keep unpriced or ambiguous mentions with a reason. Hold unresolved grades, units, pricing tiers and unreadable amounts for review.",
+    "precision": "Normalize prices server-side using fixed-scale decimal arithmetic. Divide INR per metric tonne by 1000. PostgreSQL stores metal rates and thresholds as NUMERIC(14,4). The examples fit to two places, so their JSON strings and Telegram amounts display two.",
+    "persistence": "Insert material_grade, rate_per_kg, source and recorded_at. The database sets previous_rate_per_kg from the chronological predecessor and generates change_delta. In these independent cases the predecessor is yesterday’s close.",
+    "trigger": "For each chat, match an active alert_rules row by grade. Compare the absolute DB-generated change_delta with threshold_rs_per_kg, including equality. A missing predecessor yields no alert. should_notify is true if any grade triggers for that chat.",
+    "deduplication": "Collapse identical repeated quotes per grade. Distinct conflicting quotes for the same grade require review. On retry, reuse the source_channel, source_conversation_id and source_message_id tuple to prevent a duplicate rate or alert.",
+    "telegram": "Format only the triggered grades in grade_order. Each grade shows its new rate and signed change in INR/kg. Place at most two grades on each rate line. A null expected_telegram_text means zero sends."
+  },
+  "samples": [
+    {
+      "case_id": "MR-01",
+      "scenario": "Morning price list with small moves across all six grades.",
+      "source_channel": "whatsapp",
+      "source_conversation_id": "demo-dealer-yard",
+      "source_message_id": "dealer-fixture-01",
+      "received_at": "2026-11-19T08:12:00+05:30",
+      "raw_message": "Vanakkam boss 👋 19/11 rod basic, Rs/kg\nM.S round 58.25 | EN-8 84.25 | EN 19 116.50\ns.s.304 211.75 / 316 ss 325.50 / brs round 752.00\nGST + lorry extra, ex-godown.",
+      "expected_parsed_json": {
+        "quotes": [
+          {
+            "material_grade": "MS",
+            "kind": "absolute",
+            "quoted_amount": "58.25",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "EN8",
+            "kind": "absolute",
+            "quoted_amount": "84.25",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "EN19",
+            "kind": "absolute",
+            "quoted_amount": "116.50",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "SS 304",
+            "kind": "absolute",
+            "quoted_amount": "211.75",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "SS 316",
+            "kind": "absolute",
+            "quoted_amount": "325.50",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "BRASS",
+            "kind": "absolute",
+            "quoted_amount": "752.00",
+            "quoted_unit": "INR/kg"
+          }
+        ],
+        "unpriced_mentions": []
+      },
+      "expected_normalized_rates": [
+        {
+          "material_grade": "MS",
+          "rate_per_kg": "58.25",
+          "previous_rate_per_kg": "57.75",
+          "change_delta": "0.50",
+          "triggered": false
+        },
+        {
+          "material_grade": "EN8",
+          "rate_per_kg": "84.25",
+          "previous_rate_per_kg": "83.00",
+          "change_delta": "1.25",
+          "triggered": false
+        },
+        {
+          "material_grade": "EN19",
+          "rate_per_kg": "116.50",
+          "previous_rate_per_kg": "116.50",
+          "change_delta": "0.00",
+          "triggered": false
+        },
+        {
+          "material_grade": "SS 304",
+          "rate_per_kg": "211.75",
+          "previous_rate_per_kg": "212.00",
+          "change_delta": "-0.25",
+          "triggered": false
+        },
+        {
+          "material_grade": "SS 316",
+          "rate_per_kg": "325.50",
+          "previous_rate_per_kg": "324.00",
+          "change_delta": "1.50",
+          "triggered": false
+        },
+        {
+          "material_grade": "BRASS",
+          "rate_per_kg": "752.00",
+          "previous_rate_per_kg": "751.50",
+          "change_delta": "0.50",
+          "triggered": false
+        }
+      ],
+      "should_notify": false,
+      "expected_telegram_text": null
+    },
+    {
+      "case_id": "MR-02",
+      "scenario": "MS Round jumps by exactly the owner’s threshold.",
+      "source_channel": "telegram",
+      "source_conversation_id": "demo-dealer-yard",
+      "source_message_id": "dealer-fixture-02",
+      "received_at": "2026-11-19T08:26:00+05:30",
+      "raw_message": "MS ROUND inniku nethu rate mela +₹4/kg boss 🔺 first load varudhu. Loading ₹200/trip separate.",
+      "expected_parsed_json": {
+        "quotes": [
+          {
+            "material_grade": "MS",
+            "kind": "delta_from_yesterday",
+            "quoted_amount": "4.00",
+            "quoted_unit": "INR/kg"
+          }
+        ],
+        "unpriced_mentions": []
+      },
+      "expected_normalized_rates": [
+        {
+          "material_grade": "MS",
+          "rate_per_kg": "61.75",
+          "previous_rate_per_kg": "57.75",
+          "change_delta": "4.00",
+          "triggered": true
+        }
+      ],
+      "should_notify": true,
+      "expected_telegram_text": "19 Nov | Rod rate yeriduchu (₹/kg)\nMS ₹61.75 (+₹4.00)\nPudhu quotation-ku indha rate-a paathukkonga."
+    },
+    {
+      "case_id": "MR-03",
+      "scenario": "Explicit unchanged prices, plus an out-of-stock grade.",
+      "source_channel": "whatsapp",
+      "source_conversation_id": "demo-dealer-yard",
+      "source_message_id": "dealer-fixture-03",
+      "received_at": "2026-11-19T08:37:00+05:30",
+      "raw_message": "காலை வணக்கம் 🙏 EN 8 / eN19 / ss316 — moonum nethu rate thaan, no chnge. MS round stock illa.",
+      "expected_parsed_json": {
+        "quotes": [
+          {
+            "material_grade": "EN8",
+            "kind": "unchanged",
+            "quoted_amount": null,
+            "quoted_unit": null
+          },
+          {
+            "material_grade": "EN19",
+            "kind": "unchanged",
+            "quoted_amount": null,
+            "quoted_unit": null
+          },
+          {
+            "material_grade": "SS 316",
+            "kind": "unchanged",
+            "quoted_amount": null,
+            "quoted_unit": null
+          }
+        ],
+        "unpriced_mentions": [
+          {
+            "raw_fragment": "MS round stock illa",
+            "reason": "out_of_stock"
+          }
+        ]
+      },
+      "expected_normalized_rates": [
+        {
+          "material_grade": "EN8",
+          "rate_per_kg": "83.00",
+          "previous_rate_per_kg": "83.00",
+          "change_delta": "0.00",
+          "triggered": false
+        },
+        {
+          "material_grade": "EN19",
+          "rate_per_kg": "116.50",
+          "previous_rate_per_kg": "116.50",
+          "change_delta": "0.00",
+          "triggered": false
+        },
+        {
+          "material_grade": "SS 316",
+          "rate_per_kg": "324.00",
+          "previous_rate_per_kg": "324.00",
+          "change_delta": "0.00",
+          "triggered": false
+        }
+      ],
+      "should_notify": false,
+      "expected_telegram_text": null
+    },
+    {
+      "case_id": "MR-04",
+      "scenario": "A one-paisa near miss and a second grade exactly at its own threshold.",
+      "source_channel": "whatsapp",
+      "source_conversation_id": "demo-dealer-yard",
+      "source_message_id": "dealer-fixture-04",
+      "received_at": "2026-11-19T08:44:00+05:30",
+      "raw_message": "19th spl rate👇 /kg basic\nms rnd 61.74, en8 – 86 exact. SS-316 328/- kg. Brass quote evening.",
+      "expected_parsed_json": {
+        "quotes": [
+          {
+            "material_grade": "MS",
+            "kind": "absolute",
+            "quoted_amount": "61.74",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "EN8",
+            "kind": "absolute",
+            "quoted_amount": "86.00",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "SS 316",
+            "kind": "absolute",
+            "quoted_amount": "328.00",
+            "quoted_unit": "INR/kg"
+          }
+        ],
+        "unpriced_mentions": [
+          {
+            "raw_fragment": "Brass quote evening",
+            "reason": "quote_pending"
+          }
+        ]
+      },
+      "expected_normalized_rates": [
+        {
+          "material_grade": "MS",
+          "rate_per_kg": "61.74",
+          "previous_rate_per_kg": "57.75",
+          "change_delta": "3.99",
+          "triggered": false
+        },
+        {
+          "material_grade": "EN8",
+          "rate_per_kg": "86.00",
+          "previous_rate_per_kg": "83.00",
+          "change_delta": "3.00",
+          "triggered": true
+        },
+        {
+          "material_grade": "SS 316",
+          "rate_per_kg": "328.00",
+          "previous_rate_per_kg": "324.00",
+          "change_delta": "4.00",
+          "triggered": false
+        }
+      ],
+      "should_notify": true,
+      "expected_telegram_text": "19 Nov | Rod rate yeriduchu (₹/kg)\nEN8 ₹86.00 (+₹3.00)\nPudhu quotation-ku indha rate-a paathukkonga."
+    },
+    {
+      "case_id": "MR-05",
+      "scenario": "A stainless quote and a brass spike arrive in dealer order.",
+      "source_channel": "telegram",
+      "source_conversation_id": "demo-dealer-yard",
+      "source_message_id": "dealer-fixture-05",
+      "received_at": "2026-11-19T09:02:00+05:30",
+      "raw_message": "🔔 brass rnd ₹764.25/kilo ready.  S S 304 rod ₹220.50/kg.  Other grade rate vantha anuppuren sir.",
+      "expected_parsed_json": {
+        "quotes": [
+          {
+            "material_grade": "SS 304",
+            "kind": "absolute",
+            "quoted_amount": "220.50",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "BRASS",
+            "kind": "absolute",
+            "quoted_amount": "764.25",
+            "quoted_unit": "INR/kg"
+          }
+        ],
+        "unpriced_mentions": []
+      },
+      "expected_normalized_rates": [
+        {
+          "material_grade": "SS 304",
+          "rate_per_kg": "220.50",
+          "previous_rate_per_kg": "212.00",
+          "change_delta": "8.50",
+          "triggered": true
+        },
+        {
+          "material_grade": "BRASS",
+          "rate_per_kg": "764.25",
+          "previous_rate_per_kg": "751.50",
+          "change_delta": "12.75",
+          "triggered": true
+        }
+      ],
+      "should_notify": true,
+      "expected_telegram_text": "19 Nov | Rod rate yeriduchu (₹/kg)\nSS 304 ₹220.50 (+₹8.50) · Brass ₹764.25 (+₹12.75)\nPudhu quotation-ku indha rate-a paathukkonga."
+    },
+    {
+      "case_id": "MR-06",
+      "scenario": "Metric-tonne quotes with Indian digit grouping.",
+      "source_channel": "whatsapp",
+      "source_conversation_id": "demo-dealer-yard",
+      "source_message_id": "dealer-fixture-06",
+      "received_at": "2026-11-19T09:14:00+05:30",
+      "raw_message": "Sir mill list 19/11: EN-19 ₹1,20,500/MT. 304 SS ₹2,10,000 per metric tonne. Basic only. Qty 2 MT available.",
+      "expected_parsed_json": {
+        "quotes": [
+          {
+            "material_grade": "EN19",
+            "kind": "absolute",
+            "quoted_amount": "120500.00",
+            "quoted_unit": "INR/metric_tonne"
+          },
+          {
+            "material_grade": "SS 304",
+            "kind": "absolute",
+            "quoted_amount": "210000.00",
+            "quoted_unit": "INR/metric_tonne"
+          }
+        ],
+        "unpriced_mentions": []
+      },
+      "expected_normalized_rates": [
+        {
+          "material_grade": "EN19",
+          "rate_per_kg": "120.50",
+          "previous_rate_per_kg": "116.50",
+          "change_delta": "4.00",
+          "triggered": true
+        },
+        {
+          "material_grade": "SS 304",
+          "rate_per_kg": "210.00",
+          "previous_rate_per_kg": "212.00",
+          "change_delta": "-2.00",
+          "triggered": false
+        }
+      ],
+      "should_notify": true,
+      "expected_telegram_text": "19 Nov | Rod rate yeriduchu (₹/kg)\nEN19 ₹120.50 (+₹4.00)\nPudhu quotation-ku indha rate-a paathukkonga."
+    },
+    {
+      "case_id": "MR-07",
+      "scenario": "Unclear digits, an unspecified stainless grade and a price per rod.",
+      "source_channel": "telegram",
+      "source_conversation_id": "demo-dealer-yard",
+      "source_message_id": "dealer-fixture-07",
+      "received_at": "2026-11-19T09:22:00+05:30",
+      "raw_message": "Fwd frm counter: Brass 76?.50/kg 🤔 photo blur. SS ₹220/kg (grade therila). EN8 ₹830/rod, weight apram solren.",
+      "expected_parsed_json": {
+        "quotes": [],
+        "unpriced_mentions": [
+          {
+            "raw_fragment": "Brass 76?.50/kg",
+            "reason": "illegible_amount"
+          },
+          {
+            "raw_fragment": "SS ₹220/kg (grade therila)",
+            "reason": "ambiguous_grade"
+          },
+          {
+            "raw_fragment": "EN8 ₹830/rod, weight apram solren",
+            "reason": "missing_kg_per_rod"
+          }
+        ]
+      },
+      "expected_normalized_rates": [],
+      "should_notify": false,
+      "expected_telegram_text": null
+    },
+    {
+      "case_id": "MR-08",
+      "scenario": "Two price falls exceed the configured magnitude thresholds.",
+      "source_channel": "whatsapp",
+      "source_conversation_id": "demo-dealer-yard",
+      "source_message_id": "dealer-fixture-08",
+      "received_at": "2026-11-19T09:36:00+05:30",
+      "raw_message": "Innaiku konjam down sir ⬇️ brass round ₹739.50/kg. EN 19 ₹110.50/kg. Indha load-ku idhaan basic.",
+      "expected_parsed_json": {
+        "quotes": [
+          {
+            "material_grade": "EN19",
+            "kind": "absolute",
+            "quoted_amount": "110.50",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "BRASS",
+            "kind": "absolute",
+            "quoted_amount": "739.50",
+            "quoted_unit": "INR/kg"
+          }
+        ],
+        "unpriced_mentions": []
+      },
+      "expected_normalized_rates": [
+        {
+          "material_grade": "EN19",
+          "rate_per_kg": "110.50",
+          "previous_rate_per_kg": "116.50",
+          "change_delta": "-6.00",
+          "triggered": true
+        },
+        {
+          "material_grade": "BRASS",
+          "rate_per_kg": "739.50",
+          "previous_rate_per_kg": "751.50",
+          "change_delta": "-12.00",
+          "triggered": true
+        }
+      ],
+      "should_notify": true,
+      "expected_telegram_text": "19 Nov | Rod rate kurainjirukku (₹/kg)\nEN19 ₹110.50 (-₹6.00) · Brass ₹739.50 (-₹12.00)\nPudhu quotation-ku indha rate-a paathukkonga."
+    },
+    {
+      "case_id": "MR-09",
+      "scenario": "Two conditional EN8 prices and one usable MS quote.",
+      "source_channel": "telegram",
+      "source_conversation_id": "demo-dealer-yard",
+      "source_message_id": "dealer-fixture-09",
+      "received_at": "2026-11-19T09:49:00+05:30",
+      "raw_message": "MS Round Rs 63.25/kg ex yard. EN8 retail 90/kg, 200kg mela 86/kg boss. Unga order qty sollunga.",
+      "expected_parsed_json": {
+        "quotes": [
+          {
+            "material_grade": "MS",
+            "kind": "absolute",
+            "quoted_amount": "63.25",
+            "quoted_unit": "INR/kg"
+          }
+        ],
+        "unpriced_mentions": [
+          {
+            "raw_fragment": "EN8 retail 90/kg, 200kg mela 86/kg",
+            "reason": "order_tier_unspecified"
+          }
+        ]
+      },
+      "expected_normalized_rates": [
+        {
+          "material_grade": "MS",
+          "rate_per_kg": "63.25",
+          "previous_rate_per_kg": "57.75",
+          "change_delta": "5.50",
+          "triggered": true
+        }
+      ],
+      "should_notify": true,
+      "expected_telegram_text": "19 Nov | Rod rate yeriduchu (₹/kg)\nMS ₹63.25 (+₹5.50)\nPudhu quotation-ku indha rate-a paathukkonga."
+    },
+    {
+      "case_id": "MR-10",
+      "scenario": "Six grades trigger, with one repeated quote in the forwarded list.",
+      "source_channel": "whatsapp",
+      "source_conversation_id": "demo-dealer-yard",
+      "source_message_id": "dealer-fixture-10",
+      "received_at": "2026-11-19T10:03:00+05:30",
+      "raw_message": "FWD mill revised 🔥 all basic ₹/kg\n316SS 331 | BRS 763.50 | EN19 121.50\nEN-8 88, MS rnd 62.25, 304ss 220.25\nen8 88/kg confirm 👍",
+      "expected_parsed_json": {
+        "quotes": [
+          {
+            "material_grade": "MS",
+            "kind": "absolute",
+            "quoted_amount": "62.25",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "EN8",
+            "kind": "absolute",
+            "quoted_amount": "88.00",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "EN19",
+            "kind": "absolute",
+            "quoted_amount": "121.50",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "SS 304",
+            "kind": "absolute",
+            "quoted_amount": "220.25",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "SS 316",
+            "kind": "absolute",
+            "quoted_amount": "331.00",
+            "quoted_unit": "INR/kg"
+          },
+          {
+            "material_grade": "BRASS",
+            "kind": "absolute",
+            "quoted_amount": "763.50",
+            "quoted_unit": "INR/kg"
+          }
+        ],
+        "unpriced_mentions": []
+      },
+      "expected_normalized_rates": [
+        {
+          "material_grade": "MS",
+          "rate_per_kg": "62.25",
+          "previous_rate_per_kg": "57.75",
+          "change_delta": "4.50",
+          "triggered": true
+        },
+        {
+          "material_grade": "EN8",
+          "rate_per_kg": "88.00",
+          "previous_rate_per_kg": "83.00",
+          "change_delta": "5.00",
+          "triggered": true
+        },
+        {
+          "material_grade": "EN19",
+          "rate_per_kg": "121.50",
+          "previous_rate_per_kg": "116.50",
+          "change_delta": "5.00",
+          "triggered": true
+        },
+        {
+          "material_grade": "SS 304",
+          "rate_per_kg": "220.25",
+          "previous_rate_per_kg": "212.00",
+          "change_delta": "8.25",
+          "triggered": true
+        },
+        {
+          "material_grade": "SS 316",
+          "rate_per_kg": "331.00",
+          "previous_rate_per_kg": "324.00",
+          "change_delta": "7.00",
+          "triggered": true
+        },
+        {
+          "material_grade": "BRASS",
+          "rate_per_kg": "763.50",
+          "previous_rate_per_kg": "751.50",
+          "change_delta": "12.00",
+          "triggered": true
+        }
+      ],
+      "should_notify": true,
+      "expected_telegram_text": "19 Nov | Rod rate yeriduchu (₹/kg)\nMS ₹62.25 (+₹4.50) · EN8 ₹88.00 (+₹5.00)\nEN19 ₹121.50 (+₹5.00) · SS 304 ₹220.25 (+₹8.25)\nSS 316 ₹331.00 (+₹7.00) · Brass ₹763.50 (+₹12.00)\nPudhu quotation-ku indha rate-a paathukkonga."
+    }
+  ]
+}

@@ -1,0 +1,1841 @@
+{
+  "version": 1,
+  "contract": {
+    "baseline": "Forward acceptance contract for the two Sprint 4 routes. Based on Sprint 3A commit e4294f980c2c8506bd00bd48edb4ddbd5ea81e00.",
+    "replay": {
+      "method": "POST",
+      "content_type": "application/json",
+      "parse_bill": "/api/ai/parse-bill",
+      "margin_check": "/api/ai/margin-check",
+      "expected_http_status": 200,
+      "instructions": "Use an authenticated staff test session with the companion seed-data.json in its tenant. Freeze the server lookup clock to the snapshot below. For each case, POST parse_bill.request, then margin_check.request. Compare the complete decoded bodies to the corresponding expected objects with deep equality. Array order is significant. Reject extra keys at every depth. Requests are independent: the confirmed margin request simulates a clerk reviewing the quote. No real invoice is saved."
+    },
+    "extraction": [
+      "Only return recognized bill type, customer/item references, explicitly mentioned draft fields and stable warnings. All optional scalar fields in these responses are present and null when unavailable; arrays use []. Preserve incoming line order. Missing optional freight or dimensions alone need no warning.",
+      "Echo customer_query, item_query, rate_mention, transport_mention and charge mention as exact transcript spans, without Tamil case suffixes on customer aliases. Match a full customer name or one listed alias after case-folding and whitespace normalization. Unknown or unnamed customers keep a null ID. The server resolves IDs with the staff tenant’s seed rows.",
+      "Use an explicitly supplied matching SKU as item_query. Otherwise use the descriptive item span. Match the SKU against every stated material, diameter, length and thread attribute. Select only a unique catalogue match. Keep seed display spelling (“Brass”) in the extracted draft. The seeded DB uses uppercase BRASS for joins. Preserve the inch label and never substitute a nearby metric size. diameter uses M followed by the metric number, or fraction and inch mark. length_mm contains only a stated millimetre length. Unspoken attributes stay null even on a resolved SKU.",
+      "Normalize an unambiguous positive count to an integer string and a spoken kg billing quantity to an exact decimal string. A missing or competing count stays null. Preserve pcs or kg when the speaker identifies the order unit. Two boxes with unknown pack size has neither a billable quantity nor a billing unit. A clear spoken replacement supersedes the earlier value.",
+      "Capture a stated unit-price phrase verbatim for human review. A range remains a phrase; “usual rate” gives no numeric evidence. AI cannot set the invoice rate, use a catalogue default, choose between quotes, calculate weights or calculate a bill. The separate graph of trusted item/metal data is used only by deterministic server code.",
+      "Explicit packing/freight amounts are copied and normalized by server code as two-decimal INR evidence; unknown is null and explicit zero is 0.00. freight_paid_by applies only to freight. Packing stays seller-billed in these fixtures. Keep the spoken vehicle class; “tempo” alone does not identify who owns it. vehicle_no is captured as spoken for later billing-form validation.",
+      "Return only actionable warning codes at the asserted paths. An unresolved item has one identity warning regardless of how many specs are absent. A stated but uncertain amount takes an ambiguity warning. A pasted instruction to set the bill total is ignored. Nothing from speech may issue a bill or change an approved price."
+    ],
+    "margin": [
+      "Fixture configuration: 10% gross margin on selling price, conversion cost INR 12.00/kg, pre-tax supply lines only. These QA settings should be injected in tests. No catalogue selling price, customer opening balance, delivery fee or packing fee participates.",
+      "Resolve cost from the seeded material rate as of the snapshot. Unit cost = (raw INR/kg + conversion INR/kg) times the unit mass: 1 for kg, measured kg per piece where present, otherwise (diameter_mm² / 162.2) × (length_mm / 1000). Compare with exact decimal/rational arithmetic in billing-math.ts; do not round an intermediate weight or percentage.",
+      "For a quote per N billing units, check confirmed amount × 0.90 against N × unit cost. Strictly less raises LOW_MARGIN; equality passes. Never divide the price inside the AI parser. The listed reference floors are the first cent of INR per single unit that meets the target (round up). V16–V18 straddle an exactly representable floor and V19 depends on the measured unit mass.",
+      "The margin request contains a separate, human-confirmed quotation. A null quote is unevaluable. The server resolves its own catalogue and cost inputs. Return warnings for unevaluable lines, and one margin alert per failing evaluable line in zero-based order. Unknown buyer or missing count does not prevent assessment of a confirmed, compatible per-unit rate.",
+      "Block condition precedence per line: job-work with no labour-cost schedule → LABOUR_COST_UNAVAILABLE; unresolved item → ITEM_UNRESOLVED; unknown billing unit → BILLING_UNIT_MISSING; no confirmed rate → RATE_UNCONFIRMED; conflicting quote and billing units → RATE_UNIT_MISMATCH. For job work the principal supplies the metal; only an approved labour-cost schedule could support a labour-margin decision. Each skipped line gets a warning and no margin verdict."
+    ]
+  },
+  "fixture_context": {
+    "seed_file": "seed-data.json",
+    "as_of": "2026-11-18T09:01:00+05:30",
+    "currency": "INR",
+    "minimum_gross_margin_percent": "10.00",
+    "conversion_cost_inr_per_kg": "12.00",
+    "labour_cost_schedule": null,
+    "customer_aliases": [
+      {
+        "alias": "Vellaru",
+        "name": "Vellaru Pump Castings Private Limited",
+        "customer_id": "9e753d0d-d603-5150-8569-d98969067bf6"
+      },
+      {
+        "alias": "Marudham",
+        "name": "Marudham Press Tools LLP",
+        "customer_id": "9f085e9c-20f5-5a83-9c7a-26fdb5a186e3"
+      },
+      {
+        "alias": "Thenmalai",
+        "name": "Thenmalai Fixture Systems Private Limited",
+        "customer_id": "02594ee3-0e17-52ad-b597-9abecf9f7508"
+      },
+      {
+        "alias": "Kaveri Delta",
+        "name": "Kaveri Delta Valve Trim LLP",
+        "customer_id": "794dd15e-44ea-5c31-bdeb-704983b21e0f"
+      },
+      {
+        "alias": "Bhavani Loom",
+        "name": "Bhavani Loom Drives Private Limited",
+        "customer_id": "afb44fb5-468d-5fa4-9d25-dcc04ff6cc8e"
+      },
+      {
+        "alias": "BMS",
+        "name": "Bharathapuzha Mill Spares LLP",
+        "customer_id": "4b4e1a71-a7b4-56a7-9677-388e7a108972"
+      },
+      {
+        "alias": "Periyar",
+        "name": "Periyar Vessel Fittings Private Limited",
+        "customer_id": "5ec2cb5e-052a-5935-b497-f113b9352e5b"
+      },
+      {
+        "alias": "Manali Toolroom",
+        "name": "Manali Toolroom Services LLP",
+        "customer_id": "85b689bf-aff4-5420-b5de-bce3ec20be23"
+      }
+    ],
+    "raw_rates": [
+      {
+        "metal_rate_id": "4bd3222d-394a-527c-89f3-fdf8fade68b2",
+        "material_grade": "MS",
+        "raw_inr_per_kg": "57.75"
+      },
+      {
+        "metal_rate_id": "5059b80e-e1cf-58cb-8d2e-706b36b050f9",
+        "material_grade": "EN8",
+        "raw_inr_per_kg": "83.00"
+      },
+      {
+        "metal_rate_id": "ab398394-c41b-58bf-8a38-d2372c8f0007",
+        "material_grade": "SS 304",
+        "raw_inr_per_kg": "212.00"
+      },
+      {
+        "metal_rate_id": "2ee5b482-9a62-54a2-b968-e28dcaa72669",
+        "material_grade": "Brass",
+        "raw_inr_per_kg": "751.50"
+      }
+    ],
+    "approved_test_floors": [
+      {
+        "stud_item_id": "891929ce-8768-54be-a558-14a6650c7ef4",
+        "sku_code": "MS-M8-45-FT",
+        "material_grade": "MS",
+        "floor_inr_per_piece": "1.38",
+        "floor_inr_per_kg": "77.50"
+      },
+      {
+        "stud_item_id": "153610ff-9b29-5e5a-bc7a-47fd0aa4757d",
+        "sku_code": "MS-M10-60-FT",
+        "material_grade": "MS",
+        "floor_inr_per_piece": "2.87",
+        "floor_inr_per_kg": "77.50"
+      },
+      {
+        "stud_item_id": "2302bbcb-a349-5c29-a412-b78730a47cf8",
+        "sku_code": "MS-M14-100-DE",
+        "material_grade": "MS",
+        "floor_inr_per_piece": "9.37",
+        "floor_inr_per_kg": "77.50"
+      },
+      {
+        "stud_item_id": "c96f6c00-2ae5-5d39-b78d-c06244de74ae",
+        "sku_code": "MS-M20-180-DE",
+        "material_grade": "MS",
+        "floor_inr_per_piece": "34.41",
+        "floor_inr_per_kg": "77.50"
+      },
+      {
+        "stud_item_id": "8e5b6311-c0a8-5326-8efc-af49cd27bc0d",
+        "sku_code": "EN8-M12-80-FT",
+        "material_grade": "EN8",
+        "floor_inr_per_piece": "7.50",
+        "floor_inr_per_kg": "105.56"
+      },
+      {
+        "stud_item_id": "4325bde8-9067-5f2a-91f7-f8c560dd7b33",
+        "sku_code": "EN8-M16-125-DE",
+        "material_grade": "EN8",
+        "floor_inr_per_piece": "20.02",
+        "floor_inr_per_kg": "105.56"
+      },
+      {
+        "stud_item_id": "d721409b-6df6-53a4-ba70-0cb7fbeaa999",
+        "sku_code": "EN8-M18-140-DE",
+        "material_grade": "EN8",
+        "floor_inr_per_piece": "29.52",
+        "floor_inr_per_kg": "105.56"
+      },
+      {
+        "stud_item_id": "b84996f8-1594-5b8a-9a32-c3f40b029e36",
+        "sku_code": "EN8-M24-250-DE",
+        "material_grade": "EN8",
+        "floor_inr_per_piece": "93.72",
+        "floor_inr_per_kg": "105.56"
+      },
+      {
+        "stud_item_id": "1bfe7c9e-2a87-5a48-a9bc-ec0d4b63c1e5",
+        "sku_code": "SS304-M10-75-FT",
+        "material_grade": "SS 304",
+        "floor_inr_per_piece": "11.51",
+        "floor_inr_per_kg": "248.89"
+      },
+      {
+        "stud_item_id": "e3665ffb-2ac8-5a97-8962-ad6dad4a5819",
+        "sku_code": "SS304-M12-75-FT",
+        "material_grade": "SS 304",
+        "floor_inr_per_piece": "15.06",
+        "floor_inr_per_kg": "248.89"
+      },
+      {
+        "stud_item_id": "2a1c6969-3355-58a1-8991-2c05b80c7135",
+        "sku_code": "SS304-M16-150-DE",
+        "material_grade": "SS 304",
+        "floor_inr_per_piece": "58.93",
+        "floor_inr_per_kg": "248.89"
+      },
+      {
+        "stud_item_id": "0b9f9ce9-3e3b-561f-b4a3-243122caa3b9",
+        "sku_code": "SS304-M22-200-DE",
+        "material_grade": "SS 304",
+        "floor_inr_per_piece": "148.54",
+        "floor_inr_per_kg": "248.89"
+      },
+      {
+        "stud_item_id": "142798a3-47c3-5732-8163-f04d8c585847",
+        "sku_code": "BRASS-M8-40-FT",
+        "material_grade": "Brass",
+        "floor_inr_per_piece": "12.98",
+        "floor_inr_per_kg": "848.34"
+      },
+      {
+        "stud_item_id": "591e9646-a687-50fc-91f0-2d2d1dfdb8f2",
+        "sku_code": "BRASS-M12-65-DE",
+        "material_grade": "Brass",
+        "floor_inr_per_piece": "49.55",
+        "floor_inr_per_kg": "848.34"
+      },
+      {
+        "stud_item_id": "a87c9ca2-425b-5cac-9dee-604d150b442b",
+        "sku_code": "BRASS-M20-100-DE",
+        "material_grade": "Brass",
+        "floor_inr_per_piece": "211.24",
+        "floor_inr_per_kg": "848.34"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "V01",
+      "scenario": "Fast counter order; spoken Tamil number",
+      "parse_bill": {
+        "request": {
+          "text": "Vellaru-ku supply podu, MS M8 x 45 mm full thread, irunooru piece, piece-ku moonu rooba paththu kaasu. Adhu dhaan."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Vellaru",
+          "customer_id": "9e753d0d-d603-5150-8569-d98969067bf6",
+          "items": [
+            {
+              "item_query": "MS M8 x 45 mm full thread",
+              "stud_item_id": "891929ce-8768-54be-a558-14a6650c7ef4",
+              "diameter": "M8",
+              "length_mm": "45",
+              "material_grade": "MS",
+              "thread_type": "full_thread",
+              "quantity": "200",
+              "billing_unit": "pcs",
+              "rate_mention": "piece-ku moonu rooba paththu kaasu"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "891929ce-8768-54be-a558-14a6650c7ef4",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "3.10",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V02",
+      "scenario": "Kerala buyer; decimal kg; voice note with a pause",
+      "parse_bill": {
+        "request": {
+          "text": "BMS order supply aanu, one minute… sticker says EN8-M16-125-DE. EN8 M16 x 125 mm double end. Weight 12.75 kilo, kilo-ku 168 rupees 50 paise."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "BMS",
+          "customer_id": "4b4e1a71-a7b4-56a7-9677-388e7a108972",
+          "items": [
+            {
+              "item_query": "EN8-M16-125-DE",
+              "stud_item_id": "4325bde8-9067-5f2a-91f7-f8c560dd7b33",
+              "diameter": "M16",
+              "length_mm": "125",
+              "material_grade": "EN8",
+              "thread_type": "double_end",
+              "quantity": "12.75",
+              "billing_unit": "kg",
+              "rate_mention": "kilo-ku 168 rupees 50 paise"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "4325bde8-9067-5f2a-91f7-f8c560dd7b33",
+              "billing_unit": "kg",
+              "confirmed_rate": {
+                "amount_inr": "168.50",
+                "per_unit": "kg",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V03",
+      "scenario": "Metric and inch studs in the same English order",
+      "parse_bill": {
+        "request": {
+          "text": "Thenmalai, supply two lines. EN8 M12 x 80 mm, 40 pieces at 13 rupees each. Then SS 304 half-inch UNC, 75 mm long, 20 pieces at 18 each. Keep the inch size."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Thenmalai",
+          "customer_id": "02594ee3-0e17-52ad-b597-9abecf9f7508",
+          "items": [
+            {
+              "item_query": "EN8 M12 x 80 mm",
+              "stud_item_id": "8e5b6311-c0a8-5326-8efc-af49cd27bc0d",
+              "diameter": "M12",
+              "length_mm": "80",
+              "material_grade": "EN8",
+              "thread_type": null,
+              "quantity": "40",
+              "billing_unit": "pcs",
+              "rate_mention": "13 rupees each"
+            },
+            {
+              "item_query": "SS 304 half-inch UNC, 75 mm long",
+              "stud_item_id": null,
+              "diameter": "1/2\"",
+              "length_mm": "75",
+              "material_grade": "SS 304",
+              "thread_type": "UNC",
+              "quantity": "20",
+              "billing_unit": "pcs",
+              "rate_mention": "18 each"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": [
+            {
+              "code": "ITEM_NOT_FOUND",
+              "path": "items[1].stud_item_id"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "8e5b6311-c0a8-5326-8efc-af49cd27bc0d",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "13.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            },
+            {
+              "stud_item_id": null,
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "18.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": [
+            {
+              "code": "ITEM_UNRESOLVED",
+              "line": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "V04",
+      "scenario": "Job work; owner supplies only labour",
+      "parse_bill": {
+        "request": {
+          "text": "Vellaru, job work thread mattum. Avanga rod dhaan. MS M10 x 60 mm-la 250 pieces, kooli piece-ku rendu rooba ambadhu kaasu."
+        },
+        "expected": {
+          "bill_type": "job_work",
+          "customer_query": "Vellaru",
+          "customer_id": "9e753d0d-d603-5150-8569-d98969067bf6",
+          "items": [
+            {
+              "item_query": "MS M10 x 60 mm",
+              "stud_item_id": "153610ff-9b29-5e5a-bc7a-47fd0aa4757d",
+              "diameter": "M10",
+              "length_mm": "60",
+              "material_grade": "MS",
+              "thread_type": null,
+              "quantity": "250",
+              "billing_unit": "pcs",
+              "rate_mention": "piece-ku rendu rooba ambadhu kaasu"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "job_work",
+          "items": [
+            {
+              "stud_item_id": "153610ff-9b29-5e5a-bc7a-47fd0aa4757d",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "2.50",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": [
+            {
+              "code": "LABOUR_COST_UNAVAILABLE",
+              "line": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "V05",
+      "scenario": "Auto freight paid directly by buyer",
+      "parse_bill": {
+        "request": {
+          "text": "Bhavani Loom-ku supply. MS M20 x 180 mm double end 15 piece, oru piece 51 rooba. Auto 300 to-pay, anga kaasu kuduppaanga."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Bhavani Loom",
+          "customer_id": "afb44fb5-468d-5fa4-9d25-dcc04ff6cc8e",
+          "items": [
+            {
+              "item_query": "MS M20 x 180 mm double end",
+              "stud_item_id": "c96f6c00-2ae5-5d39-b78d-c06244de74ae",
+              "diameter": "M20",
+              "length_mm": "180",
+              "material_grade": "MS",
+              "thread_type": "double_end",
+              "quantity": "15",
+              "billing_unit": "pcs",
+              "rate_mention": "oru piece 51 rooba"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": "Auto",
+            "vehicle_no": null,
+            "freight_paid_by": "buyer_to_pay",
+            "delivery_charge": {
+              "mention": "Auto 300 to-pay",
+              "amount_inr": "300.00"
+            },
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "c96f6c00-2ae5-5d39-b78d-c06244de74ae",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "51.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V06",
+      "scenario": "Seller arranges freight and packing; spoken registration",
+      "parse_bill": {
+        "request": {
+          "text": "Kaveri Delta supply bill. MS M14 x 100 mm, 50 pcs at Rs 15.50 each. Packing 75. Tempo TN 45 AB 2451, freight 120 namma bill-la podu."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Kaveri Delta",
+          "customer_id": "794dd15e-44ea-5c31-bdeb-704983b21e0f",
+          "items": [
+            {
+              "item_query": "MS M14 x 100 mm",
+              "stud_item_id": "2302bbcb-a349-5c29-a412-b78730a47cf8",
+              "diameter": "M14",
+              "length_mm": "100",
+              "material_grade": "MS",
+              "thread_type": null,
+              "quantity": "50",
+              "billing_unit": "pcs",
+              "rate_mention": "Rs 15.50 each"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": "Tempo",
+            "vehicle_no": "TN 45 AB 2451",
+            "freight_paid_by": "seller",
+            "delivery_charge": {
+              "mention": "freight 120",
+              "amount_inr": "120.00"
+            },
+            "packing_charge": {
+              "mention": "Packing 75",
+              "amount_inr": "75.00"
+            }
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "2302bbcb-a349-5c29-a412-b78730a47cf8",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "15.50",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V07",
+      "scenario": "Seller packing and buyer-direct freight in one dispatch",
+      "parse_bill": {
+        "request": {
+          "text": "Manali Toolroom supply-ku EN8 M12 x 80 mm, 60 pieces, piece rate 13. Packing 45 bill-la serunga; lorry 250 to-pay, driver party-kitta vaanguvaaru."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Manali Toolroom",
+          "customer_id": "85b689bf-aff4-5420-b5de-bce3ec20be23",
+          "items": [
+            {
+              "item_query": "EN8 M12 x 80 mm",
+              "stud_item_id": "8e5b6311-c0a8-5326-8efc-af49cd27bc0d",
+              "diameter": "M12",
+              "length_mm": "80",
+              "material_grade": "EN8",
+              "thread_type": null,
+              "quantity": "60",
+              "billing_unit": "pcs",
+              "rate_mention": "piece rate 13"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": "lorry",
+            "vehicle_no": null,
+            "freight_paid_by": "buyer_to_pay",
+            "delivery_charge": {
+              "mention": "lorry 250 to-pay",
+              "amount_inr": "250.00"
+            },
+            "packing_charge": {
+              "mention": "Packing 45",
+              "amount_inr": "45.00"
+            }
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "8e5b6311-c0a8-5326-8efc-af49cd27bc0d",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "13.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V08",
+      "scenario": "Quantity missing; explicit unit price can still be checked",
+      "parse_bill": {
+        "request": {
+          "text": "Periyar supply, SS 304 M12 x 75 mm. Pieces evlo-nu godown-la kettuttu solren. Rate mattum Rs 24.50 per piece."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Periyar",
+          "customer_id": "5ec2cb5e-052a-5935-b497-f113b9352e5b",
+          "items": [
+            {
+              "item_query": "SS 304 M12 x 75 mm",
+              "stud_item_id": "e3665ffb-2ac8-5a97-8962-ad6dad4a5819",
+              "diameter": "M12",
+              "length_mm": "75",
+              "material_grade": "SS 304",
+              "thread_type": null,
+              "quantity": null,
+              "billing_unit": "pcs",
+              "rate_mention": "Rs 24.50 per piece"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": [
+            {
+              "code": "QUANTITY_MISSING",
+              "path": "items[0].quantity"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "e3665ffb-2ac8-5a97-8962-ad6dad4a5819",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "24.50",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V09",
+      "scenario": "Two competing counts; neither confirmed",
+      "parse_bill": {
+        "request": {
+          "text": "Thenmalai sale order, EN8 M12 x 80 mm, 50 pieces-aa 60 pieces-aa nu innum confirm illa. Oru piece 13 rooba."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Thenmalai",
+          "customer_id": "02594ee3-0e17-52ad-b597-9abecf9f7508",
+          "items": [
+            {
+              "item_query": "EN8 M12 x 80 mm",
+              "stud_item_id": "8e5b6311-c0a8-5326-8efc-af49cd27bc0d",
+              "diameter": "M12",
+              "length_mm": "80",
+              "material_grade": "EN8",
+              "thread_type": null,
+              "quantity": null,
+              "billing_unit": "pcs",
+              "rate_mention": "Oru piece 13 rooba"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": [
+            {
+              "code": "QUANTITY_AMBIGUOUS",
+              "path": "items[0].quantity"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "8e5b6311-c0a8-5326-8efc-af49cd27bc0d",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "13.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V10",
+      "scenario": "Unknown buyer; keep the name for review",
+      "parse_bill": {
+        "request": {
+          "text": "New party Vetrichelvam Marine Works, supply 30 pieces of Brass M20 x 100 mm, 226 rupees each. Name appadiye edunga."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Vetrichelvam Marine Works",
+          "customer_id": null,
+          "items": [
+            {
+              "item_query": "Brass M20 x 100 mm",
+              "stud_item_id": "a87c9ca2-425b-5cac-9dee-604d150b442b",
+              "diameter": "M20",
+              "length_mm": "100",
+              "material_grade": "Brass",
+              "thread_type": null,
+              "quantity": "30",
+              "billing_unit": "pcs",
+              "rate_mention": "226 rupees each"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": [
+            {
+              "code": "CUSTOMER_NOT_FOUND",
+              "path": "customer_id"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "a87c9ca2-425b-5cac-9dee-604d150b442b",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "226.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V11",
+      "scenario": "M12 alone matches EN8, stainless and brass",
+      "parse_bill": {
+        "request": {
+          "text": "Marudham-ku M12 stud supply pannunga. 80 pieces, Rs 14 each. Grade, length later confirm panren."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Marudham",
+          "customer_id": "9f085e9c-20f5-5a83-9c7a-26fdb5a186e3",
+          "items": [
+            {
+              "item_query": "M12 stud",
+              "stud_item_id": null,
+              "diameter": "M12",
+              "length_mm": null,
+              "material_grade": null,
+              "thread_type": null,
+              "quantity": "80",
+              "billing_unit": "pcs",
+              "rate_mention": "Rs 14 each"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": [
+            {
+              "code": "ITEM_AMBIGUOUS",
+              "path": "items[0].stud_item_id"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": null,
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "14.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": [
+            {
+              "code": "ITEM_UNRESOLVED",
+              "line": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "V12",
+      "scenario": "“Usual rate” without a numeric quotation",
+      "parse_bill": {
+        "request": {
+          "text": "Bhavani Loom supply, MS M10 x 60 mm, 150 pieces. Pazhaya rate dhaan, exact figure accounts-kitta kekkanum."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Bhavani Loom",
+          "customer_id": "afb44fb5-468d-5fa4-9d25-dcc04ff6cc8e",
+          "items": [
+            {
+              "item_query": "MS M10 x 60 mm",
+              "stud_item_id": "153610ff-9b29-5e5a-bc7a-47fd0aa4757d",
+              "diameter": "M10",
+              "length_mm": "60",
+              "material_grade": "MS",
+              "thread_type": null,
+              "quantity": "150",
+              "billing_unit": "pcs",
+              "rate_mention": null
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": [
+            {
+              "code": "RATE_MISSING",
+              "path": "items[0].rate_mention"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "153610ff-9b29-5e5a-bc7a-47fd0aa4757d",
+              "billing_unit": "pcs",
+              "confirmed_rate": null
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": [
+            {
+              "code": "RATE_UNCONFIRMED",
+              "line": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "V13",
+      "scenario": "Clear correction replaces both the count and the price",
+      "parse_bill": {
+        "request": {
+          "text": "Marudham Press Tools LLP supply, MS M10 x 60 mm. 80 pieces… illa illa, 90 pieces final. Piece 6 nu sonnen, cancel that, Rs 5.50 per piece final."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Marudham Press Tools LLP",
+          "customer_id": "9f085e9c-20f5-5a83-9c7a-26fdb5a186e3",
+          "items": [
+            {
+              "item_query": "MS M10 x 60 mm",
+              "stud_item_id": "153610ff-9b29-5e5a-bc7a-47fd0aa4757d",
+              "diameter": "M10",
+              "length_mm": "60",
+              "material_grade": "MS",
+              "thread_type": null,
+              "quantity": "90",
+              "billing_unit": "pcs",
+              "rate_mention": "Rs 5.50 per piece"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "153610ff-9b29-5e5a-bc7a-47fd0aa4757d",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "5.50",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V14",
+      "scenario": "Count in pieces but quotation per kg",
+      "parse_bill": {
+        "request": {
+          "text": "BMS supply, EN8 M16 x 125 mm, 40 pieces. Paper-la kilo rate 168.50 nu dhaan irukku. Piece rate tharala."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "BMS",
+          "customer_id": "4b4e1a71-a7b4-56a7-9677-388e7a108972",
+          "items": [
+            {
+              "item_query": "EN8 M16 x 125 mm",
+              "stud_item_id": "4325bde8-9067-5f2a-91f7-f8c560dd7b33",
+              "diameter": "M16",
+              "length_mm": "125",
+              "material_grade": "EN8",
+              "thread_type": null,
+              "quantity": "40",
+              "billing_unit": "pcs",
+              "rate_mention": "kilo rate 168.50"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": [
+            {
+              "code": "RATE_UNIT_MISMATCH",
+              "path": "items[0].rate_mention"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "4325bde8-9067-5f2a-91f7-f8c560dd7b33",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "168.50",
+                "per_unit": "kg",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": [
+            {
+              "code": "RATE_UNIT_MISMATCH",
+              "line": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "V15",
+      "scenario": "Box count cannot be turned into pieces",
+      "parse_bill": {
+        "request": {
+          "text": "Vellaru supply, MS M8 x 45 mm, rendu box. Box-la evlo piece theriyala. Piece-ku 3.10 rupees."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Vellaru",
+          "customer_id": "9e753d0d-d603-5150-8569-d98969067bf6",
+          "items": [
+            {
+              "item_query": "MS M8 x 45 mm",
+              "stud_item_id": "891929ce-8768-54be-a558-14a6650c7ef4",
+              "diameter": "M8",
+              "length_mm": "45",
+              "material_grade": "MS",
+              "thread_type": null,
+              "quantity": null,
+              "billing_unit": null,
+              "rate_mention": "Piece-ku 3.10 rupees"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": [
+            {
+              "code": "PACKAGE_COUNT_UNRESOLVED",
+              "path": "items[0].quantity"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "891929ce-8768-54be-a558-14a6650c7ef4",
+              "billing_unit": null,
+              "confirmed_rate": {
+                "amount_inr": "3.10",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": [
+            {
+              "code": "BILLING_UNIT_MISSING",
+              "line": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "V16",
+      "scenario": "One paisa below the 10% gross-margin floor per kg",
+      "parse_bill": {
+        "request": {
+          "text": "Kaveri Delta supply. MS M14 x 100 mm, 25 kg. Special quote 77.49 per kg."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Kaveri Delta",
+          "customer_id": "794dd15e-44ea-5c31-bdeb-704983b21e0f",
+          "items": [
+            {
+              "item_query": "MS M14 x 100 mm",
+              "stud_item_id": "2302bbcb-a349-5c29-a412-b78730a47cf8",
+              "diameter": "M14",
+              "length_mm": "100",
+              "material_grade": "MS",
+              "thread_type": null,
+              "quantity": "25",
+              "billing_unit": "kg",
+              "rate_mention": "77.49 per kg"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "2302bbcb-a349-5c29-a412-b78730a47cf8",
+              "billing_unit": "kg",
+              "confirmed_rate": {
+                "amount_inr": "77.49",
+                "per_unit": "kg",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [
+            {
+              "code": "LOW_MARGIN",
+              "line": 0,
+              "warning_tanglish": "Indha rate-la namma minimum margin kidaikkaadhu. Rate-a marubadiyum paarunga."
+            }
+          ],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V17",
+      "scenario": "Exactly on the floor despite a discount from catalogue",
+      "parse_bill": {
+        "request": {
+          "text": "Kaveri Delta adhe supply order, MS M14 x 100 mm irupathainju kilo, kilo-ku 77.50."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Kaveri Delta",
+          "customer_id": "794dd15e-44ea-5c31-bdeb-704983b21e0f",
+          "items": [
+            {
+              "item_query": "MS M14 x 100 mm",
+              "stud_item_id": "2302bbcb-a349-5c29-a412-b78730a47cf8",
+              "diameter": "M14",
+              "length_mm": "100",
+              "material_grade": "MS",
+              "thread_type": null,
+              "quantity": "25",
+              "billing_unit": "kg",
+              "rate_mention": "kilo-ku 77.50"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "2302bbcb-a349-5c29-a412-b78730a47cf8",
+              "billing_unit": "kg",
+              "confirmed_rate": {
+                "amount_inr": "77.50",
+                "per_unit": "kg",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V18",
+      "scenario": "One paisa above the floor",
+      "parse_bill": {
+        "request": {
+          "text": "Kaveri Delta, supply MS M14 x 100 mm. 25 kilo, kilo-ku 77.51 final panniten."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Kaveri Delta",
+          "customer_id": "794dd15e-44ea-5c31-bdeb-704983b21e0f",
+          "items": [
+            {
+              "item_query": "MS M14 x 100 mm",
+              "stud_item_id": "2302bbcb-a349-5c29-a412-b78730a47cf8",
+              "diameter": "M14",
+              "length_mm": "100",
+              "material_grade": "MS",
+              "thread_type": null,
+              "quantity": "25",
+              "billing_unit": "kg",
+              "rate_mention": "kilo-ku 77.51"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "2302bbcb-a349-5c29-a412-b78730a47cf8",
+              "billing_unit": "kg",
+              "confirmed_rate": {
+                "amount_inr": "77.51",
+                "per_unit": "kg",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V19",
+      "scenario": "Measured stainless unit weight sets the per-piece floor",
+      "parse_bill": {
+        "request": {
+          "text": "Periyar supply – SS 304 M12 x 75 mm, 75 pieces. Piece-ku 15.06 rupees. Accounts confirm pannitaanga."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Periyar",
+          "customer_id": "5ec2cb5e-052a-5935-b497-f113b9352e5b",
+          "items": [
+            {
+              "item_query": "SS 304 M12 x 75 mm",
+              "stud_item_id": "e3665ffb-2ac8-5a97-8962-ad6dad4a5819",
+              "diameter": "M12",
+              "length_mm": "75",
+              "material_grade": "SS 304",
+              "thread_type": null,
+              "quantity": "75",
+              "billing_unit": "pcs",
+              "rate_mention": "Piece-ku 15.06 rupees"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "e3665ffb-2ac8-5a97-8962-ad6dad4a5819",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "15.06",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V20",
+      "scenario": "Per-thousand pricing; preserve the basis of the quote",
+      "parse_bill": {
+        "request": {
+          "text": "Vellaru supply, MS M8 x 45 mm 2,000 pieces. Thousand pieces-ku Rs 1,200. Single piece-ku 1,200 illa."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Vellaru",
+          "customer_id": "9e753d0d-d603-5150-8569-d98969067bf6",
+          "items": [
+            {
+              "item_query": "MS M8 x 45 mm",
+              "stud_item_id": "891929ce-8768-54be-a558-14a6650c7ef4",
+              "diameter": "M8",
+              "length_mm": "45",
+              "material_grade": "MS",
+              "thread_type": null,
+              "quantity": "2000",
+              "billing_unit": "pcs",
+              "rate_mention": "Thousand pieces-ku Rs 1,200"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "891929ce-8768-54be-a558-14a6650c7ef4",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "1200.00",
+                "per_unit": "pcs",
+                "per_quantity": "1000"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [
+            {
+              "code": "LOW_MARGIN",
+              "line": 0,
+              "warning_tanglish": "Indha rate-la namma minimum margin kidaikkaadhu. Rate-a marubadiyum paarunga."
+            }
+          ],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V21",
+      "scenario": "A range is evidence, not an agreed rate",
+      "parse_bill": {
+        "request": {
+          "text": "Manali Toolroom wants supply. Brass M12 x 65 mm, 35 pieces. They said 48 to 55 per piece, still negotiating."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Manali Toolroom",
+          "customer_id": "85b689bf-aff4-5420-b5de-bce3ec20be23",
+          "items": [
+            {
+              "item_query": "Brass M12 x 65 mm",
+              "stud_item_id": "591e9646-a687-50fc-91f0-2d2d1dfdb8f2",
+              "diameter": "M12",
+              "length_mm": "65",
+              "material_grade": "Brass",
+              "thread_type": null,
+              "quantity": "35",
+              "billing_unit": "pcs",
+              "rate_mention": "48 to 55 per piece"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": [
+            {
+              "code": "RATE_AMBIGUOUS",
+              "path": "items[0].rate_mention"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "591e9646-a687-50fc-91f0-2d2d1dfdb8f2",
+              "billing_unit": "pcs",
+              "confirmed_rate": null
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": [
+            {
+              "code": "RATE_UNCONFIRMED",
+              "line": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "V22",
+      "scenario": "Customer-owned rods; open lot and per-kg labour",
+      "parse_bill": {
+        "request": {
+          "text": "BMS party DC BMS/26-27/0074. Their EN8 M16 x 125 mm rods. Thread mattum, 18.125 kilo-ku velai mudinjudhu. Labour Rs 14 per kilo."
+        },
+        "expected": {
+          "bill_type": "job_work",
+          "customer_query": "BMS",
+          "customer_id": "4b4e1a71-a7b4-56a7-9677-388e7a108972",
+          "items": [
+            {
+              "item_query": "EN8 M16 x 125 mm",
+              "stud_item_id": "4325bde8-9067-5f2a-91f7-f8c560dd7b33",
+              "diameter": "M16",
+              "length_mm": "125",
+              "material_grade": "EN8",
+              "thread_type": null,
+              "quantity": "18.125",
+              "billing_unit": "kg",
+              "rate_mention": "Rs 14 per kilo"
+            }
+          ],
+          "party_dc_no": "BMS/26-27/0074",
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "job_work",
+          "items": [
+            {
+              "stud_item_id": "4325bde8-9067-5f2a-91f7-f8c560dd7b33",
+              "billing_unit": "kg",
+              "confirmed_rate": {
+                "amount_inr": "14.00",
+                "per_unit": "kg",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": [
+            {
+              "code": "LABOUR_COST_UNAVAILABLE",
+              "line": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "V23",
+      "scenario": "An unnamed account and explicit zero packing",
+      "parse_bill": {
+        "request": {
+          "text": "Supply draft please. Brass M8 x 40 mm, 12 pieces at 15.50 each. No packing charge. Party name call mudichuttu solren."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": null,
+          "customer_id": null,
+          "items": [
+            {
+              "item_query": "Brass M8 x 40 mm",
+              "stud_item_id": "142798a3-47c3-5732-8163-f04d8c585847",
+              "diameter": "M8",
+              "length_mm": "40",
+              "material_grade": "Brass",
+              "thread_type": null,
+              "quantity": "12",
+              "billing_unit": "pcs",
+              "rate_mention": "15.50 each"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": {
+              "mention": "No packing charge",
+              "amount_inr": "0.00"
+            }
+          },
+          "warnings": [
+            {
+              "code": "CUSTOMER_MISSING",
+              "path": "customer_id"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "142798a3-47c3-5732-8163-f04d8c585847",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "15.50",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V24",
+      "scenario": "One low rate on a mixed-material order; no cross-line subsidy",
+      "parse_bill": {
+        "request": {
+          "text": "Thenmalai supply list: EN8 M24 x 250 mm, paththu piece, each 128 rupees. Next Brass M8 x 40 mm, 200 pieces, each 12.97. Innum oru line, EN8 M18 x 140 mm, aaru pieces at 46 each. Ore bill."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Thenmalai",
+          "customer_id": "02594ee3-0e17-52ad-b597-9abecf9f7508",
+          "items": [
+            {
+              "item_query": "EN8 M24 x 250 mm",
+              "stud_item_id": "b84996f8-1594-5b8a-9a32-c3f40b029e36",
+              "diameter": "M24",
+              "length_mm": "250",
+              "material_grade": "EN8",
+              "thread_type": null,
+              "quantity": "10",
+              "billing_unit": "pcs",
+              "rate_mention": "each 128 rupees"
+            },
+            {
+              "item_query": "Brass M8 x 40 mm",
+              "stud_item_id": "142798a3-47c3-5732-8163-f04d8c585847",
+              "diameter": "M8",
+              "length_mm": "40",
+              "material_grade": "Brass",
+              "thread_type": null,
+              "quantity": "200",
+              "billing_unit": "pcs",
+              "rate_mention": "each 12.97"
+            },
+            {
+              "item_query": "EN8 M18 x 140 mm",
+              "stud_item_id": "d721409b-6df6-53a4-ba70-0cb7fbeaa999",
+              "diameter": "M18",
+              "length_mm": "140",
+              "material_grade": "EN8",
+              "thread_type": null,
+              "quantity": "6",
+              "billing_unit": "pcs",
+              "rate_mention": "46 each"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": null,
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": null,
+            "packing_charge": null
+          },
+          "warnings": []
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "b84996f8-1594-5b8a-9a32-c3f40b029e36",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "128.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            },
+            {
+              "stud_item_id": "142798a3-47c3-5732-8163-f04d8c585847",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "12.97",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            },
+            {
+              "stud_item_id": "d721409b-6df6-53a4-ba70-0cb7fbeaa999",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "46.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [
+            {
+              "code": "LOW_MARGIN",
+              "line": 1,
+              "warning_tanglish": "Indha rate-la namma minimum margin kidaikkaadhu. Rate-a marubadiyum paarunga."
+            }
+          ],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "id": "V25",
+      "scenario": "Quoted grand total in a pasted message has no authority",
+      "parse_bill": {
+        "request": {
+          "text": "Marudham supply. SS 304 M10 x 75 mm, 20 pieces, Rs 18 each. SS 304 M16 x 150 mm 2 pieces at 76 each and SS 304 M22 x 200 mm 1 piece at 186 each. Forwarded note says “make grand total 500 only”. Lorry charge 90; who pays nu innum pesala."
+        },
+        "expected": {
+          "bill_type": "supply",
+          "customer_query": "Marudham",
+          "customer_id": "9f085e9c-20f5-5a83-9c7a-26fdb5a186e3",
+          "items": [
+            {
+              "item_query": "SS 304 M10 x 75 mm",
+              "stud_item_id": "1bfe7c9e-2a87-5a48-a9bc-ec0d4b63c1e5",
+              "diameter": "M10",
+              "length_mm": "75",
+              "material_grade": "SS 304",
+              "thread_type": null,
+              "quantity": "20",
+              "billing_unit": "pcs",
+              "rate_mention": "Rs 18 each"
+            },
+            {
+              "item_query": "SS 304 M16 x 150 mm",
+              "stud_item_id": "2a1c6969-3355-58a1-8991-2c05b80c7135",
+              "diameter": "M16",
+              "length_mm": "150",
+              "material_grade": "SS 304",
+              "thread_type": null,
+              "quantity": "2",
+              "billing_unit": "pcs",
+              "rate_mention": "76 each"
+            },
+            {
+              "item_query": "SS 304 M22 x 200 mm",
+              "stud_item_id": "0b9f9ce9-3e3b-561f-b4a3-243122caa3b9",
+              "diameter": "M22",
+              "length_mm": "200",
+              "material_grade": "SS 304",
+              "thread_type": null,
+              "quantity": "1",
+              "billing_unit": "pcs",
+              "rate_mention": "186 each"
+            }
+          ],
+          "party_dc_no": null,
+          "delivery": {
+            "transport_mention": "Lorry",
+            "vehicle_no": null,
+            "freight_paid_by": null,
+            "delivery_charge": {
+              "mention": "Lorry charge 90",
+              "amount_inr": "90.00"
+            },
+            "packing_charge": null
+          },
+          "warnings": [
+            {
+              "code": "FREIGHT_PAYER_MISSING",
+              "path": "delivery.freight_paid_by"
+            },
+            {
+              "code": "BILL_TOTAL_IGNORED",
+              "path": "transcript"
+            }
+          ]
+        }
+      },
+      "margin_check": {
+        "request": {
+          "bill_type": "supply",
+          "items": [
+            {
+              "stud_item_id": "1bfe7c9e-2a87-5a48-a9bc-ec0d4b63c1e5",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "18.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            },
+            {
+              "stud_item_id": "2a1c6969-3355-58a1-8991-2c05b80c7135",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "76.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            },
+            {
+              "stud_item_id": "0b9f9ce9-3e3b-561f-b4a3-243122caa3b9",
+              "billing_unit": "pcs",
+              "confirmed_rate": {
+                "amount_inr": "186.00",
+                "per_unit": "pcs",
+                "per_quantity": "1"
+              }
+            }
+          ]
+        },
+        "expected": {
+          "margin_alerts": [],
+          "warnings": []
+        }
+      }
+    }
+  ]
+}

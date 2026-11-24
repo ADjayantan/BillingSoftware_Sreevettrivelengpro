@@ -842,6 +842,8 @@ describe('issued-invoice guard', () => {
       'drive_file_id',
       'dc_drive_url',
       'dc_drive_file_id',
+      'last_reminder_stage',
+      'last_reminder_sent_on',
       'cancelled_at',
       'cancellation_reason',
       'updated_at',

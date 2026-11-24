@@ -9,6 +9,7 @@ const LINKS = [
   ['/customers', 'Customers'],
   ['/stud-master', 'Studs'],
   ['/job-work', 'Job-work lots'],
+  ['/rates', 'Rates'],
   ['/company', 'Company'],
 ] as const;
 

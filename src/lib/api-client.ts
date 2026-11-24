@@ -31,9 +31,9 @@ export async function api<T>(path: string, method = 'GET', json?: unknown, timeo
     return { ok: false, status: 0, code: 'OFFLINE', message: 'No connection. Nothing is lost: try again when the internet is back.' };
   }
   const error = payload && typeof payload === 'object' ? payload.error : undefined;
-  if (response.ok && payload && typeof payload === 'object' && 'data' in payload) {
+  if (response.ok && payload && typeof payload === 'object' && !('error' in payload)) {
     setConnection('online');
-    return { ok: true, data: payload.data as T };
+    return { ok: true, data: ('data' in payload ? payload.data : payload) as T };
   }
   if (response.status === 401) {
     setConnection('signed_out');

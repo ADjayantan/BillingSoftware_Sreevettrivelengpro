@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/metal-rates",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/reminders",
+      "schedule": "30 12 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-backup",
+      "schedule": "25 18 * * 0"
+    }
+  ]
+}

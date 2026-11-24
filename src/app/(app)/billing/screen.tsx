@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { enterAdvances } from '@/components/enter-advance';
 import { Field, Notice } from '@/components/field';
 import { Typeahead } from '@/components/typeahead';
@@ -10,13 +10,48 @@ import { api } from '@/lib/api-client';
 import { autosave } from '@/lib/autosave';
 import { distinctRates } from '@/lib/bill-draft';
 import * as f from '@/lib/bill-form';
+import { connection, onConnection } from '@/lib/connection';
 import { addDays, formatTime, istDate, stateLabel } from '@/lib/india';
 import { openLots, searchCustomers, searchStuds } from '@/lib/master-search';
-import { formatInr, formatPaise } from '@/lib/money';
+import { formatInr, formatPaise, trimZeros } from '@/lib/money';
 import { offlineEngine, type OfflineEngine } from '@/lib/offline';
-import type { Customer } from '@/lib/schemas/masters';
+import type { Customer, StudItem } from '@/lib/schemas/masters';
 import { SavedBill } from './saved-bill';
 import { TransportFields } from './transport-fields';
+
+interface ParsedDraftReply {
+  bill_type: f.BillType;
+  customer_query: string | null;
+  customer_id: string | null;
+  items: Array<{
+    item_query: string;
+    stud_item_id: string | null;
+    quantity: string | null;
+    billing_unit: 'pcs' | 'kg' | null;
+    rate_mention: string | null;
+  }>;
+  party_dc_no: string | null;
+  delivery: {
+    transport_mention: string | null;
+    vehicle_no: string | null;
+    freight_paid_by: 'seller' | 'buyer_to_pay' | null;
+    delivery_charge: { mention: string; amount_inr: string } | null;
+    packing_charge: { mention: string; amount_inr: string } | null;
+  };
+  warnings: Array<{ code: string; path: string }>;
+}
+
+interface MarginCheckReply {
+  margin_alerts: Array<{ code: 'LOW_MARGIN'; line: number; warning_tanglish: string }>;
+  warnings: Array<{ code: string; line: number }>;
+}
+
+function parseNumericRateFromMention(mention: string | null, blocked: boolean): string {
+  if (!mention || blocked) return '';
+  if (/\bThousand\b/i.test(mention)) return '';
+  const m = /\b(\d+(?:\.\d{1,4})?)\b/.exec(mention.replace(/,/g, ''));
+  return m?.[1] ? trimZeros(m[1]) : '';
+}
 
 /** One id per bill, from the first moment, kept through crashes, retries and edits. */
 const mintId = (): string => `OFFLINE-${crypto.randomUUID()}`;
@@ -95,6 +130,13 @@ function BillEditor({ opened, onNew, onReopen }: {
   const [restored, setRestored] = useState(restoredAt !== null);
   const [saved, setSaved] = useState<{ issued: Issued | null } | null>(null);
   const [noCompany, setNoCompany] = useState(false);
+  const [aiText, setAiText] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiStatus, setAiStatus] = useState<string | null>(null);
+  const [listening, setListening] = useState(false);
+  const [marginState, setMarginState] = useState<{ sig: string; alerts: Record<number, string> }>({ sig: '', alerts: {} });
+  const conn = useSyncExternalStore(onConnection, connection, connection);
+  const isOffline = conn === 'offline';
   const afterLines = useRef<HTMLDivElement>(null);
   const lotRequest = useRef(0);
 
@@ -177,6 +219,176 @@ function BillEditor({ opened, onNew, onReopen }: {
   const mixedRates = distinctRates(typedLines.map((line) => ({ gst_rate: line.gst || '0' })));
   const buyerPays = form.freightPaidBy === 'buyer_to_pay';
 
+  // Non-blocking margin watchdog: checks confirmed rates on supply lines when online.
+  const marginSignature =
+    isOffline || form.type !== 'supply'
+      ? ''
+      : form.lines
+          .map((l) => `${l.key}:${l.stud?.id ?? ''}:${l.unit}:${l.rate}`)
+          .join('|');
+  const marginAlerts = marginState.sig === marginSignature ? marginState.alerts : {};
+  useEffect(() => {
+    if (!marginSignature) return;
+    const candidates = form.lines.map((line, idx) => ({ line, idx })).filter(({ line }) => !f.isBlank(line));
+    if (!candidates.some(({ line }) => line.stud && /^\d+(\.\d{1,4})?$/.test(line.rate))) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        const res = await api<MarginCheckReply>('/api/ai/margin-check', 'POST', {
+          bill_type: form.type,
+          items: candidates.map(({ line }) => ({
+            stud_item_id: line.stud?.id ?? null,
+            billing_unit: line.unit,
+            confirmed_rate: /^\d+(\.\d{1,4})?$/.test(line.rate)
+              ? { amount_inr: line.rate, per_unit: line.unit, per_quantity: '1' }
+              : null,
+          })),
+        });
+        if (cancelled || !res.ok) return;
+        const next: Record<number, string> = {};
+        for (const alert of res.data.margin_alerts) {
+          const target = candidates[alert.line];
+          if (target) next[target.line.key] = alert.warning_tanglish;
+        }
+        setMarginState({ sig: marginSignature, alerts: next });
+      })();
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [marginSignature, form.type, form.lines]);
+
+  async function applyAiQuickFill(): Promise<void> {
+    const text = aiText.trim();
+    if (!text || aiBusy || isOffline) return;
+    setAiBusy(true);
+    setAiStatus(null);
+    const res = await api<ParsedDraftReply>('/api/ai/parse-bill', 'POST', { text });
+    if (!res.ok) {
+      setAiBusy(false);
+      setAiStatus(res.message);
+      return;
+    }
+    const parsed = res.data;
+    let resolvedCustomer: Customer | null = null;
+    if (parsed.customer_id) {
+      const cRes = await api<Customer>(`/api/customers/${parsed.customer_id}`);
+      if (cRes.ok) resolvedCustomer = cRes.data;
+    } else if (parsed.customer_query) {
+      const found = await searchCustomers(parsed.customer_query);
+      if (found.length === 1) resolvedCustomer = found[0]!.value;
+    }
+
+    const builtLines: f.FormLine[] = [];
+    for (let idx = 0; idx < parsed.items.length; idx += 1) {
+      const item = parsed.items[idx]!;
+      let baseLine = f.blankLine(idx + 1, parsed.bill_type);
+      let resolvedStud: StudItem | null = null;
+      if (item.stud_item_id) {
+        const sRes = await api<StudItem>(`/api/stud-items/${item.stud_item_id}`);
+        if (sRes.ok) resolvedStud = sRes.data;
+      } else if (item.item_query) {
+        const foundStuds = await searchStuds(item.item_query);
+        if (foundStuds.length === 1) resolvedStud = foundStuds[0]!.value;
+      }
+      if (resolvedStud) {
+        baseLine = f.pickStud(baseLine, resolvedStud, parsed.bill_type);
+      } else {
+        baseLine = { ...baseLine, text: item.item_query };
+      }
+      if (item.billing_unit) {
+        baseLine = f.changeUnit(baseLine, item.billing_unit, parsed.bill_type);
+      }
+      const rateBlocked = parsed.warnings.some(
+        (w) =>
+          w.path === `items[${idx}].rate_mention` &&
+          (w.code === 'RATE_AMBIGUOUS' || w.code === 'RATE_MISSING' || w.code === 'RATE_UNIT_MISMATCH'),
+      );
+      const parsedRate = parseNumericRateFromMention(item.rate_mention, rateBlocked);
+      baseLine = {
+        ...baseLine,
+        quantity: item.quantity ?? '',
+        rate: parsedRate || baseLine.rate,
+      };
+      builtLines.push(baseLine);
+    }
+
+    setForm((old) => ({
+      ...f.changeType(old, parsed.bill_type),
+      customer: resolvedCustomer ?? old.customer,
+      customerText: resolvedCustomer?.name ?? parsed.customer_query ?? old.customerText,
+      dueDate: resolvedCustomer ? null : old.dueDate,
+      lines: f.withTrailingBlank(builtLines.length > 0 ? builtLines : old.lines, parsed.bill_type),
+      packing: parsed.delivery.packing_charge ? trimZeros(parsed.delivery.packing_charge.amount_inr) : old.packing,
+      freight: parsed.delivery.delivery_charge ? trimZeros(parsed.delivery.delivery_charge.amount_inr) : old.freight,
+      freightPaidBy: parsed.delivery.freight_paid_by ?? old.freightPaidBy,
+      transport: {
+        ...old.transport,
+        vehicle_no: parsed.delivery.vehicle_no ?? old.transport.vehicle_no,
+      },
+    }));
+    if (resolvedCustomer) void loadLots(resolvedCustomer);
+    setAiBusy(false);
+    setAiStatus(
+      parsed.warnings.length > 0
+        ? `Draft filled (${parsed.warnings.map((w) => w.code).join(', ')}) — verify totals below.`
+        : 'Draft filled from Tanglish note — verify fields before saving.',
+    );
+  }
+
+  function startVoiceMic(): void {
+    if (isOffline || listening) return;
+    const SpeechCtor = (
+      window as unknown as {
+        SpeechRecognition?: new () => {
+          lang: string;
+          interimResults: boolean;
+          onresult: ((ev: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+          onerror: (() => void) | null;
+          onend: (() => void) | null;
+          start: () => void;
+        };
+        webkitSpeechRecognition?: new () => {
+          lang: string;
+          interimResults: boolean;
+          onresult: ((ev: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+          onerror: (() => void) | null;
+          onend: (() => void) | null;
+          start: () => void;
+        };
+      }
+    ).SpeechRecognition ??
+      (
+        window as unknown as {
+          webkitSpeechRecognition?: new () => {
+            lang: string;
+            interimResults: boolean;
+            onresult: ((ev: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+            onerror: (() => void) | null;
+            onend: (() => void) | null;
+            start: () => void;
+          };
+        }
+      ).webkitSpeechRecognition;
+
+    if (!SpeechCtor) {
+      setAiStatus('Voice dictation is not supported in this browser; type Tanglish directly.');
+      return;
+    }
+    const rec = new SpeechCtor();
+    rec.lang = 'ta-IN';
+    rec.interimResults = false;
+    setListening(true);
+    rec.onresult = (ev) => {
+      const transcript = ev.results[0]?.[0]?.transcript ?? '';
+      if (transcript) setAiText((prev) => (prev ? `${prev} ${transcript}` : transcript));
+    };
+    rec.onerror = () => setListening(false);
+    rec.onend = () => setListening(false);
+    rec.start();
+  }
+
   async function save(event: FormEvent): Promise<void> {
     event.preventDefault();
     if (busy || saved) return;
@@ -224,6 +436,51 @@ function BillEditor({ opened, onNew, onReopen }: {
           <button type="button" className="underline" onClick={clear}>Start fresh</button>
         </p>
       ) : null}
+      <section className="card grid gap-2" aria-label="Tanglish voice or text quick-fill">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            aria-label="Tanglish quick-fill transcript"
+            data-enter-skip
+            className="field min-w-0 flex-1"
+            placeholder={
+              isOffline
+                ? 'Offline mode: Voice/AI quick-fill is paused; manual billing works offline'
+                : 'Tanglish / voice note (e.g. Vellaru-ku MS M8 x 45 mm full thread, 200 pcs, piece-ku 3.10)…'
+            }
+            disabled={isOffline || aiBusy}
+            value={aiText}
+            onChange={(event) => setAiText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                void applyAiQuickFill();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="btn"
+            disabled={isOffline || aiBusy || listening}
+            onClick={startVoiceMic}
+            aria-label="Dictate Tanglish bill"
+          >
+            {listening ? 'Listening…' : 'Mic'}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={isOffline || aiBusy || aiText.trim() === ''}
+            onClick={() => void applyAiQuickFill()}
+          >
+            {aiBusy ? 'Filling…' : 'Fill draft'}
+          </button>
+        </div>
+        {isOffline ? (
+          <p className="text-sm text-muted">Voice/AI quick-fill needs internet; manual billing and offline queue work normally.</p>
+        ) : aiStatus ? (
+          <p role="status" className="text-sm text-muted">{aiStatus}</p>
+        ) : null}
+      </section>
       <section className="card grid gap-3 sm:grid-cols-2 lg:grid-cols-[auto_2fr_1fr_1fr]">
         <fieldset>
           <legend className="mb-1 text-sm font-semibold">Bill</legend>
@@ -268,6 +525,9 @@ function BillEditor({ opened, onNew, onReopen }: {
                   }}
                 />
                 {other.weightKg ? <p className="mt-1 text-sm text-muted">{other.weightKg} kg</p> : other.pieces ? <p className="mt-1 text-sm text-muted">≈ {other.pieces} pcs</p> : null}
+                {marginAlerts[line.key] ? (
+                  <p role="status" className="mt-1 text-sm font-semibold text-warn">{marginAlerts[line.key]}</p>
+                ) : null}
               </div>
               <input aria-label={`Line ${i + 1} quantity`} placeholder="Qty" className="field num col-span-2 md:col-span-1" inputMode="decimal" value={line.quantity} onChange={(event) => patchLine(line.key, (old) => ({ ...old, quantity: event.target.value.trim() }))} />
               <select aria-label={`Line ${i + 1} unit`} data-enter-skip className="field col-span-2 md:col-span-1" value={line.unit} onChange={(event) => patchLine(line.key, (old) => f.changeUnit(old, event.target.value === 'kg' ? 'kg' : 'pcs', form.type))}>

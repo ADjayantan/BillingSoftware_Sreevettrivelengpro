@@ -168,7 +168,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     const studsRes = await supabase
       .from('stud_items')
       .select('id, diameter_mm, length_mm, material_grade, unit_weight_kg, unit_weight_is_manual')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .not('diameter_mm', 'is', null); // studs only: nothing else has a metal cost to compare with
     const ratesRes = await supabase
       .from('latest_metal_rates')
       .select('material_grade, rate_per_kg');

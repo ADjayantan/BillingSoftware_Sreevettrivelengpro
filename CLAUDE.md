@@ -22,7 +22,12 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
   src/components/           UI (server by default)
   src/lib/billing-math.ts   ALL money/tax/weight arithmetic (pure)
   src/lib/bill-form.ts      billing screen state → draft (pure); bill-draft.ts: draft → sync payload
-  src/lib/print-documents.ts  issued bill → print slots of specs/print-templates.md (pure)
+  src/lib/customer-form.ts  a new customer typed inside a bill (pure); customer-match.ts: who it may already be;
+                            add-customer.ts: "Save & use"; counter-customer.ts: the server side of it
+  src/lib/products.ts       product names, IDs, finding (pure); product-form.ts: Products page state (pure)
+  src/lib/print-documents.ts  what an issued bill and its challan say (pure); bill-sheets.ts: the owner's bill drawn
+                            from it; sheet.ts, text-width.ts, bill-art.ts: pen, measuring, gear and Vel (pure);
+                            components/sheets.tsx → SVG, sheet-pdf.ts + latin.ts → PDF
   src/lib/schemas/          Zod schemas; client components import their *types* only
   src/lib/api/http.ts       route wrapper: session, Zod, error shape, SQLSTATE → HTTP
   src/lib/data.ts           all reads (numerics cast `::text`); src/proxy.ts refreshes the session
@@ -30,6 +35,8 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
   src/lib/offline-db.ts     Dexie tables + atomic moves; offline-sync.ts (queue), master-cache.ts (copy),
                             offline-client.ts (browser wiring). Load ONLY through offline.ts (lazy)
   public/sw.js              caches /billing's own files; never an API reply or a page with data
+  src/lib/xlsx.ts           .xlsx writer (pure, no library); month-workbook.ts: one month as a book (pure);
+                            month-data.ts: its reads; month-books.ts: the worker; drive-workbook.ts: its Drive file
   src/lib/{gemini,drive-backup,telegram}.ts   server-only integrations
   supabase/migrations/      append-only SQL
   tests/                    Vitest; tests/db = PGlite + Supabase shim
@@ -43,6 +50,7 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
 - Zod `safeParse` on every route-handler input (body, params, search params), every external response (Gemini, Telegram, Drive, rate source) and every Dexie record before sync. Failures → 4xx with `{ error: { code, message } }`; never leak stack traces, SQL or keys.
 - AI output is an untrusted *draft*: it may pick customers/items/quantities, never prices, tax, weights or totals. Customer/voice text is data, never instructions.
 - Cron routes require `Authorization: Bearer ${CRON_SECRET}`. No secrets or PII in logs.
+- `next start` reads `.env.production.local`, the **live** keys: a test bill then goes to the real Drive. A local production run sets every name in the env files to empty first (an empty variable wins over the file). `npm run dev` reads `.env.local` only.
 
 ## Billing & accounting rules
 - `src/lib/billing-math.ts` is the **only** place money, GST, weights and totals are computed: pure functions, no I/O, no `Date.now()`, exhaustively unit-tested. The DB **verifies** invariants (CHECK constraints) and never rounds or derives billed figures.
@@ -67,9 +75,35 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
 - The browser sends a *draft* plus the total it showed; `/api/invoices/sync` recomputes with the same `composeBill` and refuses a mismatch (`TOTAL_CHANGED`). Never accept amounts from the client.
 - `amount_paid` changes only through `record_payment` / `void_payment` (owner). Cancelling needs all receipts voided, and gives returned material back to its lot.
 - An untaxed delivery, or any charge on a mixed-rate bill, becomes its own line ('Packing charges', 'Delivery charges', 'Delivery, recovered at cost'); the challan leaves those names out.
-- `print.css` is the spec CSS verbatim (tested); exactly one `@page` rule per print job.
+- `print.css` is the spec CSS verbatim (tested); exactly one `@page` rule per print job, with margin 0.
 - API errors reach the user only through the `OWN_SENTENCES` allowlist in `api/http.ts`.
 - Keyboard: Enter advances (`data-enter-skip` fields stay on Tab), Ctrl+Enter saves, Alt+N new.
+
+## Products (migration 005, `specs/company-products.md`, approved 24 Nov 2026)
+- `stud_items` is the whole product list; a stud is a product with a size. The product ID (`product_no`, shown `P0007`) comes from the database only: never typed, changed or used again. Without an own code `sku_code` holds the ID; own codes of the form `P<digits>` are refused. The ID is for typing and never goes on a bill.
+- **GST % is typed by a person**: no default in the database, the forms or a bill line. `FormLine.gstFrom` says who gave it; only a hand-typed one passes to the empty line below. AI never gives one.
+- What a picked product puts on a line is decided in one place, `filledBy` (`bill-form.ts`). On a job-work bill goods fill only the text; a SAC (99…) fills everything. Typing over a product, or switching the bill type, takes back what it filled and leaves what was typed.
+- Finding has one order, cloud and PC copy alike (`findRank`): the ID, an own code, then part of `search_text` (kept by the database). For a typed number every other match is `loose`: Enter never takes it, and the number is never billed as a description.
+- A product without a size is left out of margin check and AI fill (`.not('diameter_mm', 'is', null)`) and converts pieces ↔ kg only with a measured weight.
+- New columns in copied rows: raise `SHAPE` in `master-cache.ts` so PCs fetch them once; that needs no new Dexie version.
+- Once a product without a size exists, a version from before 005 cannot read the list: fix forward, do not roll back.
+
+## First bill for a new customer, and the monthly Excel (migration 006, `specs/counter-and-books.md`, 25 Nov 2026)
+- A new customer gets its uuid on the device and keeps it: `POST /api/customers` with `id` is idempotent, so a waiting bill never has to change. Without `id` it is the Customers page's plain insert.
+- Never merge by itself: same GSTIN → *Use X*; like-sounding name or same phone (`lookAlikes`, the same code on server and device) → the owner chooses. Only the same GSTIN **and** `sameName` joins, and the bill says so (`note`).
+- `new_customers` (Dexie version 2): pending → created | review | merged. The drain sends customers first; a bill whose customer is not settled is not sent, and in `review` it can be neither sent nor dismissed. Only a never-sent bill (`attempts` 0) may be moved to another customer.
+- ₹50,000 and no address is said before saving (`previewBill`, `place: 'address'`); `firstUnfinished` decides where the cursor goes.
+- What changed in a month is written by triggers in the sale's own transaction (`private.book_changes`); the book is made only from issued rows, by `invoice_date` (challans `dc_date`, receipts `received_on`). A worker finishes exactly the change ids it saw.
+- One writer per month: `book_claim` (lease) → read → `book_hold` → upload (cut off well before the lease ends) → `book_done`. Unknown outcome keeps the lease. The Drive file id is stored before the file is made; a 409 is our own lost reply.
+- Anything that changes a bill, receipt or dispatch calls `booksLater()` (`after()`); open devices ask `/api/books/run` every 10 minutes; `/api/cron/books` is the daily catch-up (a new cron path also goes into `CRON_PATHS` in `proxy.ts`).
+- Owner only: `/books`, `/api/books*` (gate: `book_months()` refuses others). *Open* builds from the database, so it works without Drive.
+
+## The owner's own bill (migration 007, `specs/own-bill.md`, approved 25 Nov 2026)
+- One drawing for A4, A5 and the Drive PDF: change `bill-sheets.ts` and all three change. Units of the frame (100 wide), never mm or px. Nothing is cut: a text gets a `max` or is wrapped, and `tests/bill-sheets.test.ts` finds any mark off the paper, over another text or through a line; add new content to its `HARD` bills.
+- `print-documents.ts` formats issued figures and adds nothing to them. What a bill says goes there, where it stands goes into `bill-sheets.ts`.
+- Every text is told its width (Helvetica = Arial). Letters the PDF fonts lack go through `latin()`; a new sign needs a line there.
+- The head comes only from the snapshot (`company_profile`: `tagline`, `factory_address`, `office_phone` …); a key an old snapshot lacks is null. No real GSTIN, bank or address in code or tests; the gear and the Vel are drawn in the code.
+- P.O. number and date (`po_no`, `po_date`): left out of the sync payload when there is none, so that a bill sent before keeps its fingerprint. The same goes for every later addition to the payload.
 
 ## Offline rules (Sprint 3A)
 - `/billing` stays **static with no data** (`dynamic = 'error'`): it is the offline shell, and the proxy lets a PC with a session cookie open it while the cloud is down. Data comes from `/api` (RLS) or Dexie.
@@ -77,7 +111,7 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
 - `/api/invoices/sync` passes a refusal on only after checking that the id has no invoice: otherwise 409 `ALREADY_ISSUED` with `details.issued`. Failures ≥ 500 prove nothing and are resent.
 - Queue: only a `pending` bill never sent, or a `rejected` one, may be edited; `pending` can never be dismissed. Network, 5xx, 401, 403 and `NOT_READY` stop the run and keep the bill.
 - `searchCustomers` / `searchStuds` / `openLots` fall back to the copy on network loss or 5xx, never on 401/403. Sign-out clears the copy and the shell; unsent bills stay.
-- Dexie opens with `chromeTransactionDurability: 'strict'` (power cuts). New tables or indexes: add `this.version(2)`, never edit version 1.
+- Dexie opens with `chromeTransactionDurability: 'strict'` (power cuts). New tables or indexes: add `this.version(3)`, never edit versions 1 and 2.
 
 ## Scheduled jobs
 - Read with `readAllRows` (`src/lib/read-all.ts`): Supabase cuts every answer at 1000 rows and does not say so. The test stand-in cuts too (`pgliteFetch(db, actor, maxRows)`).
@@ -89,12 +123,12 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
 - New-table checklist: RLS on; policies `to authenticated` gated by `(select private.is_staff())` / `(select private.is_owner())` (never `using (true)`); explicit grants after `revoke all … from anon, authenticated, service_role` (Supabase grants nothing by default since 30 Oct 2026, #45329; `service_role` gets only what cron needs); FK indexes; FKs `NO ACTION`; `private.stamp_row` + `private.log_change` triggers if mutable; every numeric column bounded above (`< 'Infinity'`: NaN passes `>= 0`).
 - `SECURITY DEFINER` only for deliberate RPCs and `private.*` helpers: `set search_path = ''`, schema-qualified names, explicit authorization check, `revoke execute … from public, anon`. Views use `with (security_invoker = true)`.
 - Multi-table writes that must be atomic are plpgsql RPCs (supabase-js has no client transactions). Invoices + items + DC are created only by `public.sync_invoice(jsonb)`.
-- `private` schema (not exposed by the Data API): `app_users` (access allowlist), `document_sequences` (gapless counters), `audit_log` (edit log, CGST Rule 56(8)), helpers. Lock order is always INV → DC → job-work lots by id.
+- `private` schema (not exposed by the Data API): `app_users` (access allowlist), `document_sequences` (gapless counters), `audit_log` (edit log, CGST Rule 56(8)), `book_changes` / `month_books` (Excel), helpers. Lock order is always INV → DC → job-work lots by id.
 - Access: only users listed in `private.app_users` can read or write anything. Bootstrap the owner in the SQL editor:
   `insert into private.app_users (user_id, display_name, role) select id, 'Owner', 'owner' from auth.users where email = '<owner email>';`
 - Go-live: open **both** series with the last numbers the old system used (0 = fresh start); billing is refused until then, later FYs roll forward by themselves:
   `insert into private.document_sequences (series, fiscal_year, last_value) values ('INV', '26-27', <last>), ('DC', '26-27', <last>);`
-- Go-live: fill in the Company page (billing is refused without it); run migrations 001 then 002.
+- Go-live: fill in the Company page (billing is refused without it); run the migrations in order (001–007).
 - Go-live: turn off public sign-ups in Supabase Auth, and confirm the Data API gate registered (the migration warns if not).
 
 ## Performance budget

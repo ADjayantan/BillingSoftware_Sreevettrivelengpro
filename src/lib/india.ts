@@ -53,6 +53,23 @@ export function formatDate(isoDate: string): string {
   return `${Number(day)} ${MONTHS[Number(month) - 1] ?? ''} ${year}`;
 }
 
+/** '2026-11-03' -> '03.11.26', for the dt of the bill */
+export const shortDate = (isoDate: string): string => isoDate.slice(2, 10).split('-').reverse().join('.');
+
+const MOBILE = /^(\+91)?([6-9]\d{4})(\d{5})$/;
+export const isMobile = (phone: string): boolean => MOBILE.test(phone);
+
+/** '9876543210' -> '98765 43210'. Where the code of a landline ends nobody can tell: left as it is. */
+export const formatPhone = (phone: string): string => {
+  const parts = MOBILE.exec(phone);
+  return parts ? parts.slice(1).filter(Boolean).join(' ') : phone;
+};
+
+const LONG_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'] as const;
+
+/** '2026-11-01' -> 'November 2026' */
+export const monthName = (isoDate: string): string => `${LONG_MONTHS[Number(isoDate.slice(5, 7)) - 1] ?? ''} ${isoDate.slice(0, 4)}`;
+
 /** '24 Nov, 10:32 am' in India time, for "when was this typed". */
 export const formatTime = (epochMs: number): string =>
   new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(epochMs);

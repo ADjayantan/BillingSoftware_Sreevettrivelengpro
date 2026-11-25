@@ -1,4 +1,5 @@
 // Session refresh: an expired access token is renewed before the page renders.
+import { readFileSync } from 'node:fs';
 import { NextRequest } from 'next/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -122,6 +123,16 @@ describe('proxy', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('lets every scheduled job through to its own check, and nothing near them', async () => {
+    const { crons } = JSON.parse(readFileSync('vercel.json', 'utf8')) as { crons: { path: string; schedule: string }[] };
+    expect(crons.map(({ path }) => path)).toContain('/api/cron/books');
+    for (const { path, schedule } of crons) {
+      expect((await visit(path)).status, path).toBe(200);
+      expect(schedule, path).toMatch(/^\d+ \d+ \* \* (\*|\d)$/); // at most once a day
+    }
+    for (const path of ['/api/cron/books/x', '/api/cron', '/api/books', '/api/books/run', '/api/books/2026-11']) expect((await visit(path)).status, path).toBe(401);
   });
 
   it('serves the install files without a session', async () => {

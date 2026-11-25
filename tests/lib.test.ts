@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calculateInvoiceDetail } from '@/lib/billing-math';
-import { addDays, daysBetween, formatDate, istDate, isValidGstin } from '@/lib/india';
+import { addDays, daysBetween, formatDate, formatPhone, isMobile, istDate, isValidGstin, shortDate } from '@/lib/india';
 import { decimalToPaise, formatInr, paiseToDecimal, parseRupees, rupeesInWords, trimZeros } from '@/lib/money';
 import { parsePublicEnv } from '@/lib/schemas/public-env';
 import { invoiceSummaryText, reminderStage, reminderText, whatsappLink } from '@/lib/whatsapp';
@@ -41,6 +41,16 @@ describe('India facts', () => {
     expect(addDays('2028-02-28', 2)).toBe('2028-03-01');
     expect(daysBetween('2026-11-20', '2026-12-05')).toBe(15);
     expect(formatDate('2026-11-03')).toBe('3 Nov 2026');
+    expect(shortDate('2026-11-03')).toBe('03.11.26');
+  });
+  it('writes a mobile number as it is read, and leaves others alone', () => {
+    expect(formatPhone('9876543210')).toBe('98765 43210');
+    expect(formatPhone('+919876543210')).toBe('+91 98765 43210');
+    expect([isMobile('9876543210'), isMobile('+919876543210')]).toEqual([true, true]);
+    for (const other of ['04221234567', '08022223333', '+14155550100', '1234567890']) {
+      expect(formatPhone(other)).toBe(other);
+      expect(isMobile(other)).toBe(false);
+    }
   });
 });
 

@@ -1,43 +1,21 @@
-/* Verbatim from specs/print-templates.md (tests/print.test.ts compares). The one matching @page rule is in page.tsx. */
-* { box-sizing: border-box; }
-.packet { color: #161616; font: 10pt/1.28 Inter, Arial, "Nirmala UI", sans-serif; }
-.sheet { width: 100%; overflow-wrap: anywhere; }
-.sheet h1 { margin: 0 0 1.5mm; font-size: 16pt; line-height: 1.1; }
-.sheet p { margin: 1.5mm 0; }
-.sheet small { display: block; font-size: 0.92em; }
-.pair { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 5mm; }
-.ruled, .strip, .closing { border-top: 0.25mm solid #666; margin-top: 2mm; padding-top: 2mm; }
-.strip { display: flex; flex-wrap: wrap; gap: 1mm 4mm; }
-.lines, .tax { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 2.5mm; }
-.lines .item { width: 43%; } .lines .qty { width: 16%; }
-.lines .rate { width: 18%; } .lines .amount { width: 23%; }
-.sheet th, .sheet td { padding: 1.3mm; text-align: left; vertical-align: top; border-bottom: 0.2mm solid #999; }
-.sheet .num, .sum strong, .total b:last-child { text-align: right; font-variant-numeric: tabular-nums; }
-.sheet .ref { font-size: 0.92em; font-weight: normal; }
-.sum { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 3mm; }
-.total { margin-top: 1mm; padding-top: 1mm; border-top: 0.35mm solid; font-size: 1.16em; }
-.signs { margin-top: 3mm; }
-.signline { margin-top: 9mm; border-top: 0.2mm solid; padding-top: 1mm; }
-.irp { display: flex; align-items: center; gap: 3mm; margin-top: 2mm; }
-.irp img { width: 36mm; height: 36mm; object-fit: contain; flex: none; }
-.packet[data-paper="a5"] { font-size: 9pt; }
-.packet[data-paper="a5"] h1 { font-size: 13pt; }
-.packet[data-paper="a5"] :is(th, td) { padding: 0.9mm; }
+/* The first part is verbatim from specs/print-templates.md (tests/sheet-output.test.ts compares). The one matching @page rule is in page.tsx. */
+.packet { color: #111111; }
+.sheet svg { display: block; width: 100%; height: auto; }
 
 @media print {
   html, body { margin: 0; padding: 0; background: white; }
   .screen-only { display: none !important; }
-  .packet, .sheet { display: block; width: auto; height: auto; overflow: visible; box-shadow: none; }
-  .sheet + .sheet { page-break-before: always; break-before: page; }
-  thead { display: table-header-group; }
-  tr, .keep, .pair { page-break-inside: avoid; break-inside: avoid; }
-  h1, h2 { break-after: avoid; }
+  /* A millimetre less than the paper: rounding must not start an empty page. */
+  .sheet { overflow: hidden; break-inside: avoid; }
+  .sheet + .sheet { break-before: page; }
+  .packet[data-paper="a4"] .sheet { width: 210mm; height: 296mm; }
+  .packet[data-paper="a5"] .sheet { width: 148mm; height: 209mm; }
 }
 
-/* Screen preview only: white paper in both colour schemes. */
+/* Screen preview only: white paper in both colour schemes, no wider than the screen. */
 @media screen {
-  .preview { overflow-x: auto; padding: 4mm; background: #d7dbdf; }
-  .preview .sheet { margin: 0 auto 6mm; padding: 10mm; background: white; }
-  .preview .packet[data-paper='a4'] .sheet { width: 210mm; min-height: 297mm; }
-  .preview .packet[data-paper='a5'] .sheet { width: 148mm; min-height: 210mm; padding: 7mm; }
+  .preview { padding: 4mm; background: #d7dbdf; }
+  .preview .sheet { margin: 0 auto 6mm; background: white; }
+  .preview .packet[data-paper='a4'] .sheet { max-width: 210mm; }
+  .preview .packet[data-paper='a5'] .sheet { max-width: 148mm; }
 }

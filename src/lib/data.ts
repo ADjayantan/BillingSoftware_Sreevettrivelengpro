@@ -3,6 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { ApiError, likePattern, must, parseRow } from '@/lib/api/http';
 import { weightForPieces } from '@/lib/billing-math';
+import { typedProductNo } from '@/lib/products';
+import { bookMonthRow, type BookMonthRow } from '@/lib/schemas/books';
 import { PAGE_SIZE } from '@/lib/schemas/common';
 import * as inv from '@/lib/schemas/invoices';
 import * as m from '@/lib/schemas/masters';
@@ -14,15 +16,15 @@ import * as m from '@/lib/schemas/masters';
 export const CUSTOMER_COLUMNS =
   'id,name,gstin,phone,state_code,is_sez,credit_days,address,opening_balance::text,is_active';
 export const STUD_COLUMNS =
-  'id,sku_code,diameter_mm::text,length_mm::text,thread_type,material_grade,hsn_sac,gst_rate_percent::text,unit_weight_kg::text,unit_weight_is_manual,default_rate_per_piece::text,default_rate_per_kg::text,is_active';
+  'id,product_no,name,sku_code,search_text,diameter_mm::text,length_mm::text,thread_type,material_grade,hsn_sac,gst_rate_percent::text,unit_weight_kg::text,unit_weight_is_manual,default_rate_per_piece::text,default_rate_per_kg::text,is_active';
 export const LOT_COLUMNS =
   'id,customer_id,party_dc_no,party_dc_date,material_grade,description,inward_weight_kg::text,outward_weight_kg::text,scrap_weight_kg::text,balance_weight_kg::text,status,close_reason,notes';
 export const COMPANY_COLUMNS =
-  'legal_name,gstin,address,state_code,phone,email,bank_name,bank_branch,bank_account_no,bank_ifsc';
+  'legal_name,tagline,gstin,address,factory_address,state_code,phone,office_phone,email,bank_name,bank_branch,bank_account_no,bank_ifsc';
 const INVOICE_LIST_COLUMNS =
   'id,invoice_no,bill_type,invoice_date,due_date,grand_total::text,amount_paid::text,payment_status,cancelled_at,customer_snapshot';
 const INVOICE_COLUMNS =
-  'id,invoice_no,client_temp_id,bill_type,customer_id,invoice_date,due_date,place_of_supply,is_sez,customer_snapshot,supplier_snapshot,subtotal::text,packing_charge::text,delivery_charge::text,delivery_taxable,cgst::text,sgst::text,igst::text,charges_cgst::text,charges_sgst::text,charges_igst::text,round_off::text,grand_total::text,amount_paid::text,payment_status,notes,cancelled_at,cancellation_reason';
+  'id,invoice_no,client_temp_id,bill_type,customer_id,invoice_date,due_date,place_of_supply,is_sez,customer_snapshot,supplier_snapshot,subtotal::text,packing_charge::text,delivery_charge::text,delivery_taxable,cgst::text,sgst::text,igst::text,charges_cgst::text,charges_sgst::text,charges_igst::text,round_off::text,grand_total::text,amount_paid::text,payment_status,po_no,po_date,notes,cancelled_at,cancellation_reason';
 const ITEM_COLUMNS =
   'line_no,description,hsn_sac,qty_pieces,total_weight_kg::text,billing_unit,unit_rate::text,tax_rate_percent::text,line_total::text,cgst_amount::text,sgst_amount::text,igst_amount::text';
 export const DELIVERY_COLUMNS =
@@ -46,14 +48,21 @@ const from = (page: number): number => (page - 1) * PAGE_SIZE;
 
 export async function listCustomers(db: SupabaseClient, q: string, page: number): Promise<Page<m.Customer>> {
   let request = db.from('customers').select(CUSTOMER_COLUMNS).order('name').order('id').range(from(page), from(page) + PAGE_SIZE);
-  if (q) request = request.ilike('name', likePattern(q));
+  if (q) request = request.ilike('search_text', likePattern(q)); // name, phone or GSTIN
   return toPage(m.customerRow, must(await request), page);
 }
 
+/** By ID. A typed ID puts that product before everything else that matches. */
 export async function listStudItems(db: SupabaseClient, q: string, page: number): Promise<Page<m.StudItem>> {
-  let request = db.from('stud_items').select(STUD_COLUMNS).order('sku_code').range(from(page), from(page) + PAGE_SIZE);
-  if (q) request = request.ilike('sku_code', likePattern(q));
-  return toPage(m.studItemRow, must(await request), page);
+  const no = typedProductNo(q);
+  const asked: unknown[] = no === null ? [] : must(await db.from('stud_items').select(STUD_COLUMNS).eq('product_no', no));
+  // It takes the first place of page 1, so everyone else moves down by one.
+  const shift = asked.length;
+  let request = db.from('stud_items').select(STUD_COLUMNS).order('product_no').range(Math.max(0, from(page) - shift), from(page) + PAGE_SIZE - shift);
+  if (q) request = request.ilike('search_text', likePattern(q));
+  if (no !== null) request = request.neq('product_no', no);
+  const others: unknown[] = must(await request);
+  return toPage(m.studItemRow, page === 1 ? [...asked, ...others] : others, page);
 }
 
 export async function listLots(
@@ -149,12 +158,15 @@ export async function getInvoice(db: SupabaseClient, invoiceId: string): Promise
   };
 }
 
-/** The stored row for a validated stud: the formula weight is always computed, never typed. */
+/** The months of the Excel books, newest first. The database refuses everybody but the owner. */
+export const bookMonths = async (db: SupabaseClient): Promise<BookMonthRow[]> => parseRow(z.array(bookMonthRow), must(await db.rpc('book_months')));
+
+/** The stored row for a validated product: a stud's formula weight is always computed, never typed. */
 export function studRecord(input: z.output<typeof m.studItemInput>): Record<string, unknown> {
   const { manual_unit_weight_kg, ...rest } = input;
   return {
     ...rest,
-    unit_weight_kg: manual_unit_weight_kg ?? weightForPieces(input, 1),
+    unit_weight_kg: manual_unit_weight_kg ?? (input.diameter_mm === null ? null : weightForPieces(input, 1)),
     unit_weight_is_manual: manual_unit_weight_kg !== null,
   };
 }

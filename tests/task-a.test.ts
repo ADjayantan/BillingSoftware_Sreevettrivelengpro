@@ -108,6 +108,8 @@ const seedData = JSON.parse(
 };
 
 let db: PGlite;
+/** In the list through every case below: a product without a size, named like a stud. */
+let nutId: string;
 const actor: Actor = ACTORS.staff;
 let signedIn = true;
 
@@ -169,6 +171,11 @@ beforeAll(async () => {
       ],
     );
   }
+  const { rows } = await db.query<{ id: string }>(
+    `insert into public.stud_items (name, hsn_sac, gst_rate_percent, default_rate_per_piece)
+     values ('MS M8 x 45 mm full thread nut', '731816', 18, 4.5) returning id`,
+  );
+  nutId = rows[0]!.id;
 });
 
 afterAll(async () => {
@@ -380,6 +387,56 @@ describe('Task A · 2. Live Billing AI Contract (V01–V25 from specs/ai-voice-t
       expect(marginBody).toEqual(testCase.margin_check.expected);
     },
   );
+});
+
+describe('a product without a size', () => {
+  it('is left out of what the AI may pick from', async () => {
+    const parseRoute = await import('@/app/api/ai/parse-bill/route');
+    const reply = {
+      bill_type: 'supply', customer_query: null, customer_id: null, party_dc_no: null, warnings: [],
+      items: [{ item_query: 'nut', stud_item_id: null, diameter: null, length_mm: null, material_grade: null, thread_type: null, quantity: '100', billing_unit: 'pcs', rate_mention: null }],
+      delivery: { transport_mention: null, vehicle_no: null, freight_paid_by: null, delivery_charge: null, packing_charge: null },
+    };
+    let prompt = '';
+    vi.stubEnv('GEMINI_API_KEY_PRIMARY', 'test-gemini-key');
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      prompt = (JSON.parse(String(init.body)) as { contents: { parts: { text: string }[] }[] }).contents[0]!.parts[0]!.text;
+      return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(reply) }] } }] });
+    });
+    try {
+      const response = await parseRoute.POST(
+        new Request('http://localhost/api/ai/parse-bill', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'nut 100 pcs' }) }),
+      );
+      expect(response.status).toBe(200);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+    const catalogue = JSON.parse(/Catalogue:\n(.*)\n/.exec(prompt)?.[1] ?? 'null') as { stud_items: { id: string; diameter_mm: number; thread_type: string }[] };
+    expect(catalogue.stud_items).toHaveLength(seedData.stud_items.length);
+    expect(catalogue.stud_items.map((item) => item.id)).not.toContain(nutId);
+    expect(catalogue.stud_items.every((item) => item.diameter_mm > 0 && item.thread_type.length > 0)).toBe(true);
+  });
+
+  it('has no margin to check, and does not stop the check of the studs beside it', async () => {
+    const marginRoute = await import('@/app/api/ai/margin-check/route');
+    const rate = (amount: string) => ({ amount_inr: amount, per_unit: 'pcs', per_quantity: '1' });
+    const response = await marginRoute.POST(
+      new Request('http://localhost/api/ai/margin-check', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          bill_type: 'supply',
+          items: [
+            { stud_item_id: nutId, billing_unit: 'pcs', confirmed_rate: rate('0.01') },
+            { stud_item_id: '891929ce-8768-54be-a558-14a6650c7ef4', billing_unit: 'pcs', confirmed_rate: rate('0.01') },
+          ],
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ margin_alerts: [{ code: 'LOW_MARGIN', line: 1 }], warnings: [{ code: 'ITEM_UNRESOLVED', line: 0 }] });
+  });
 });
 
 describe('Task A · 3. Metal Rates Cron & Spike Alerts (MR-01–MR-10 from specs/metal-rate-samples.json)', () => {

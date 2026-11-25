@@ -4,10 +4,12 @@ import { api } from './api-client';
 import type { Autosave } from './autosave';
 import type { BillForm } from './bill-form';
 import { connection, onConnection, setConnection } from './connection';
+import type { CustomerBody, CustomerForm } from './customer-form';
 import * as store from './offline-db';
 import { drainQueue, type DrainResult } from './offline-sync';
 import * as masters from './master-cache';
 import type { BillDraftInput } from './schemas/invoices';
+import type { Customer, StudItem } from './schemas/masters';
 
 const db = new store.OfflineDb();
 const OPEN_TIMEOUT = 4000;
@@ -75,9 +77,10 @@ export const reopen = (tempId: string): Promise<boolean> => store.reopenBill(db,
 export const dismiss = (tempId: string): Promise<void> => store.dismissBill(db, tempId);
 export const isReopenable = store.isReopenable;
 export const forgetMasters = (): Promise<void> => store.forgetMasters(db);
-export const unsent = async (): Promise<number> => (await store.queueSummary(db)).pending + (await db.drafts.count());
+export const unsent = async (): Promise<number> => (await db.offline_queue.where('status').anyOf('pending', 'review').count()) + (await db.drafts.count());
 
 const send = (draft: BillDraftInput) => api<{ invoice_id: string; invoice_no: string; dc_no: string }>('/api/invoices/sync', 'POST', draft);
+const create = (body: CustomerBody) => api<unknown>('/api/customers', 'POST', body);
 
 let running: Promise<DrainResult> | null = null;
 let again = false;
@@ -94,7 +97,7 @@ export function syncNow(): Promise<DrainResult> {
     let result: DrainResult;
     do {
       again = false;
-      result = await exclusively('studflow-sync', () => drainQueue(db, send));
+      result = await exclusively('studflow-sync', () => drainQueue(db, send, create));
     } while (again);
     scheduleRetry(result);
     return result;
@@ -121,8 +124,12 @@ export function watchQueue(next: (summary: store.QueueSummary) => void): () => v
   return () => subscription.unsubscribe();
 }
 
-export function watchBill(tempId: string, next: (item: store.QueueRecord | undefined) => void): () => void {
-  const subscription = liveQuery(() => store.queuedBill(db, tempId)).subscribe({ next, error: () => undefined });
+/** The bill, and the new customer it waits for, if it does. */
+export function watchBill(tempId: string, next: (item: store.QueueRecord | undefined, customer: store.NewCustomerRecord | undefined) => void): () => void {
+  const subscription = liveQuery(async () => {
+    const item = await store.queuedBill(db, tempId);
+    return { item, customer: item?.status === 'review' && item.draft ? await db.new_customers.get(item.draft.customer_id) : undefined };
+  }).subscribe({ next: ({ item, customer }) => next(item, customer), error: () => undefined });
   return () => subscription.unsubscribe();
 }
 
@@ -131,10 +138,33 @@ export function watchDrafts(next: (drafts: store.DraftRecord[]) => void): () => 
   return () => subscription.unsubscribe();
 }
 
+// ---- New customers -----------------------------------------------------------
+export const saveNewCustomer = (form: CustomerForm): Promise<Customer> => store.saveNewCustomer(db, form);
+export const knownMatches = (form: CustomerForm) => masters.knownMatches(db, form);
+export const unsyncedCustomers = (q: string): Promise<Customer[]> => masters.unsyncedCustomers(db, q);
+/** The books have just taken it. */
+export async function keepCustomer(customer: Customer): Promise<void> {
+  await store.markCreated(db, customer.id);
+  await masters.keepCustomer(db, customer);
+}
+export const dropNewCustomer = (id: string): Promise<void> => store.dropNewCustomer(db, id);
+export const newCustomer = (id: string) => db.new_customers.get(id);
+/** The owner's answers about a customer in review; the bills that waited for it go at once. */
+export async function chooseExisting(id: string, customer: Customer): Promise<void> {
+  await store.joinCustomer(db, id, customer);
+  void syncNow();
+}
+export async function chooseDifferent(id: string): Promise<void> {
+  await store.differentCustomer(db, id);
+  void syncNow();
+}
+
 // ---- Masters -----------------------------------------------------------------
 export const cachedCustomers = (q: string) => masters.cachedCustomers(db, q);
 export const cachedStuds = (q: string) => masters.cachedStuds(db, q);
 export const cachedOpenLots = (customerId: string) => masters.cachedOpenLots(db, customerId);
+export const keepProduct = (product: StudItem): Promise<void> => masters.keepProduct(db, product);
+export const forgetProduct = (id: string): Promise<void> => masters.forgetProduct(db, id);
 
 const REFRESH_EVERY = 10 * 60_000;
 let refreshing = false;
@@ -157,6 +187,12 @@ async function refreshMasters(): Promise<void> {
   }
 }
 
+// ---- Excel books -------------------------------------------------------------
+/** What the server could not write to Drive is tried again while anybody has the app open. */
+const askForBooks = (): void => {
+  if (connection() === 'online') void api('/api/books/run', 'POST', {});
+};
+
 // ---- Life cycle --------------------------------------------------------------
 const PROBE_EVERY = 15_000;
 
@@ -178,6 +214,7 @@ export function start(): () => void {
   const stopWatching = onConnection(cameBack);
   const prober = setInterval(() => void probe(), PROBE_EVERY);
   const refresher = setInterval(() => void refreshMasters(), REFRESH_EVERY);
+  const asker = setInterval(askForBooks, REFRESH_EVERY);
   if (navigator.onLine === false) onOffline();
   window.addEventListener('offline', onOffline);
   window.addEventListener('online', onOnline);
@@ -189,6 +226,7 @@ export function start(): () => void {
     stopWatching();
     clearInterval(prober);
     clearInterval(refresher);
+    clearInterval(asker);
     clearTimeout(retryTimer);
     window.removeEventListener('offline', onOffline);
     window.removeEventListener('online', onOnline);

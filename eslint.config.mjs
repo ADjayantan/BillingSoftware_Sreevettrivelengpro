@@ -6,5 +6,6 @@ export default defineConfig([
   ...nextVitals,
   ...nextTs,
   { rules: { '@typescript-eslint/no-explicit-any': 'error' } },
-  globalIgnores(['.next/**', 'out/**', 'coverage/**', 'next-env.d.ts']),
+  // .claude: other sessions' working copies of this project, with builds of their own.
+  globalIgnores(['.next/**', 'out/**', 'coverage/**', 'next-env.d.ts', '.claude/**']),
 ]);

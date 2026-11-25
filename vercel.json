@@ -9,6 +9,10 @@
       "schedule": "30 12 * * *"
     },
     {
+      "path": "/api/cron/books",
+      "schedule": "0 21 * * *"
+    },
+    {
       "path": "/api/cron/weekly-backup",
       "schedule": "25 18 * * 0"
     }

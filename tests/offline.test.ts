@@ -8,10 +8,11 @@ import { api } from '@/lib/api-client';
 import { autosave } from '@/lib/autosave';
 import * as f from '@/lib/bill-form';
 import { connection, setConnection } from '@/lib/connection';
-import { LIMITS, cachedCustomers, cachedOpenLots, cachedStuds, refreshMasters, type FetchMasters } from '@/lib/master-cache';
-import { openLots, searchCustomers, searchStuds } from '@/lib/master-search';
+import { LIMITS, cachedCustomers, cachedOpenLots, cachedStuds, forgetProduct, keepProduct, refreshMasters, type FetchMasters } from '@/lib/master-cache';
+import { onlyStudByCode, openLots, searchCustomers, searchStuds } from '@/lib/master-search';
+import { productCode } from '@/lib/products';
 import * as store from '@/lib/offline-db';
-import { drainQueue, judge, type SendBill } from '@/lib/offline-sync';
+import { drainQueue, judge, type CreateCustomer, type SendBill } from '@/lib/offline-sync';
 import type { BillDraftInput } from '@/lib/schemas/invoices';
 import type { Customer, JobWorkLot } from '@/lib/schemas/masters';
 import { ACTORS, TEST_TODAY, createTestDb, seedMasterData, type MasterData } from './db/harness';
@@ -74,6 +75,7 @@ async function serve(path: string, init: RequestInit = {}): Promise<Response> {
 }
 
 const send: SendBill = (draft) => api('/api/invoices/sync', 'POST', draft);
+const create: CreateCustomer = (body) => api('/api/customers', 'POST', body);
 const fetchMasters: FetchMasters = (kind, since, after) =>
   api(`/api/offline-cache?${new URLSearchParams({ kind, ...(since ? { since } : {}), ...(after ? { after } : {}) }).toString()}`);
 
@@ -112,7 +114,7 @@ function typedBill(over: Partial<f.BillForm> = {}): f.BillForm {
   const form = f.newBill(`OFFLINE-${crypto.randomUUID()}`, TEST_TODAY);
   return {
     ...form, customer, customerText: customer.name, packing: '20', freight: '30',
-    lines: f.withTrailingBlank([{ ...f.blankLine(1, 'supply'), text: 'Studs M12', quantity: '10', rate: '100' }], 'supply'),
+    lines: f.withTrailingBlank([{ ...f.typeGst(f.blankLine(1, 'supply'), '18'), text: 'Studs M12', quantity: '10', rate: '100' }], 'supply'),
     transport: { ...form.transport, vehicle_no: 'TN38AB1234', driver_name: 'Kumar', lr_number: 'LR9' },
     ...over,
   };
@@ -224,24 +226,53 @@ describe('offline queue', () => {
     const form = typedBill();
     const draft = await queue(form);
     wire = 'down';
-    expect(await drainQueue(db, send)).toMatchObject({ stopped: 'offline' });
+    expect(await drainQueue(db, send, create)).toMatchObject({ stopped: 'offline' });
     expect(await bill(form)).toMatchObject({ status: 'pending', attempts: 1 });
     expect(connection()).toBe('offline');
     reopenPc(); // and the PC is switched off overnight
     expect((await bill(form)).draft).toEqual(draft);
     expect((await bill(form)).draft).toMatchObject({ client_temp_id: form.tempId, expected_total_paise: 123_900, delivery: { vehicle_no: 'TN38AB1234', lr_number: 'LR9' } });
     wire = 'up';
-    expect(await drainQueue(db, send)).toEqual({ stopped: 'done', message: null });
+    expect(await drainQueue(db, send, create)).toEqual({ stopped: 'done', message: null });
     const [invoice] = await invoicesOf(form);
     // Issued: the number is kept, the bill itself is not (no invoice history on the device).
     expect(await bill(form)).toMatchObject({ status: 'synced', draft: null, form: null, issued: { invoice_id: invoice?.id, invoice_no: invoice?.invoice_no } });
     expect(connection()).toBe('online');
   });
 
+  it('carries the buyer’s order typed while offline', async () => {
+    wire = 'down';
+    const form = typedBill({ poNo: '4500012/A', poDate: '2026-11-18' });
+    await queue(form);
+    await drainQueue(db, send, create);
+    reopenPc();
+    wire = 'up';
+    await drainQueue(db, send, create);
+    const { rows } = await pg.query('select po_no, po_date::text as po_date from public.invoices where client_temp_id = $1', [form.tempId]);
+    expect(rows).toEqual([{ po_no: '4500012/A', po_date: '2026-11-18' }]);
+  });
+
+  it('a bill queued by the version before orders, and sent with its answer lost, is found again', async () => {
+    const form = typedBill();
+    const draft = await queue(form);
+    // As that version wrote it: without the keys.
+    const item = await bill(form);
+    const { po_no, po_date, ...old } = draft;
+    expect([po_no, po_date]).toEqual(['', null]);
+    await db.offline_queue.update(item.seq, { draft: old });
+    wire = 'lose-reply';
+    await drainQueue(db, send, create);
+    expect((await bill(form)).status).toBe('pending');
+    wire = 'up';
+    await drainQueue(db, send, create);
+    expect((await bill(form)).status).toBe('synced');
+    expect(await invoicesOf(form)).toHaveLength(1);
+  });
+
   it('sends in the order typed, so numbers follow', async () => {
     const forms = [typedBill(), typedBill(), typedBill()];
     for (const form of forms) await queue(form);
-    await drainQueue(db, send);
+    await drainQueue(db, send, create);
     const numbers = await Promise.all(forms.map(async (form) => Number((await bill(form)).issued?.invoice_no.split('/')[2])));
     expect(numbers).toEqual([numbers[0], (numbers[0] ?? 0) + 1, (numbers[0] ?? 0) + 2]);
   });
@@ -250,7 +281,7 @@ describe('offline queue', () => {
     const form = typedBill();
     await queue(form);
     wire = 'lose-reply';
-    expect((await drainQueue(db, send)).stopped).toBe('offline');
+    expect((await drainQueue(db, send, create)).stopped).toBe('offline');
     const [issued] = await invoicesOf(form);
     expect(issued).toBeDefined();
     expect(await bill(form)).toMatchObject({ status: 'pending', attempts: 1 });
@@ -260,8 +291,8 @@ describe('offline queue', () => {
     await store.dismissBill(db, form.tempId);
     reopenPc();
     wire = 'up';
-    await drainQueue(db, send);
-    await drainQueue(db, send);
+    await drainQueue(db, send, create);
+    await drainQueue(db, send, create);
     expect(await invoicesOf(form)).toEqual([issued]);
     expect((await bill(form)).issued?.invoice_no).toBe(issued?.invoice_no);
   });
@@ -270,10 +301,10 @@ describe('offline queue', () => {
     const form = typedBill();
     await queue(form);
     loseDbReply = true;
-    expect((await drainQueue(db, send)).stopped).toBe('offline');
+    expect((await drainQueue(db, send, create)).stopped).toBe('offline');
     expect((await bill(form)).status).toBe('pending');
     expect(await invoicesOf(form)).toHaveLength(1);
-    await drainQueue(db, send);
+    await drainQueue(db, send, create);
     expect(await bill(form)).toMatchObject({ status: 'synced', issued: { invoice_no: (await invoicesOf(form))[0]?.invoice_no } });
   });
 
@@ -281,7 +312,7 @@ describe('offline queue', () => {
     const form = typedBill();
     await queue(form);
     wire = answer;
-    expect((await drainQueue(db, send)).stopped).toBe(answer === '401' ? 'signed_out' : 'offline');
+    expect((await drainQueue(db, send, create)).stopped).toBe(answer === '401' ? 'signed_out' : 'offline');
     expect((await bill(form)).status).toBe('pending');
     expect(connection()).toBe(answer === '401' ? 'signed_out' : 'offline');
   });
@@ -294,7 +325,7 @@ describe('offline queue', () => {
     const result = await drainQueue(db, (draft) => {
       wire = draft.client_temp_id === bad.tempId ? '500' : 'up';
       return send(draft);
-    });
+    }, create);
     expect(result.stopped).toBe('retry');
     expect((await bill(bad)).status).toBe('pending');
     expect((await bill(good)).status).toBe('synced');
@@ -305,7 +336,7 @@ describe('offline queue', () => {
     const good = typedBill();
     await queue(stale);
     await queue(good);
-    expect((await drainQueue(db, send)).stopped).toBe('done');
+    expect((await drainQueue(db, send, create)).stopped).toBe('done');
     expect(await bill(stale)).toMatchObject({ status: 'rejected', message: expect.stringContaining('31 days') as string });
     expect((await bill(good)).status).toBe('synced');
     expect(await store.queueSummary(db)).toMatchObject({ pending: 0, attention: 1 });
@@ -313,7 +344,7 @@ describe('offline queue', () => {
     const [draft] = await store.listDrafts(db);
     expect(draft?.form).toEqual(stale);
     await queue({ ...stale, invoiceDate: TEST_TODAY });
-    await drainQueue(db, send);
+    await drainQueue(db, send, create);
     expect(await invoicesOf(stale)).toHaveLength(1);
   });
 
@@ -330,7 +361,7 @@ describe('offline queue', () => {
     await db.offline_queue.where('temp_id').equals(form.tempId).modify((item) => {
       if (item.draft) item.draft.lines = [];
     });
-    await drainQueue(db, send);
+    await drainQueue(db, send, create);
     expect((await bill(form)).status).toBe('rejected');
     expect(calls).not.toContain('/api/invoices/sync');
   });
@@ -360,13 +391,13 @@ describe('409: already issued', () => {
     const form = typedBill();
     await queue(form);
     wire = 'lose-reply';
-    await drainQueue(db, send);
+    await drainQueue(db, send, create);
     const [issued] = await invoicesOf(form);
     await db.offline_queue.where('temp_id').equals(form.tempId).modify((item) => {
       if (item.draft) item.draft.notes = 'changed meanwhile';
     });
     wire = 'up';
-    expect((await drainQueue(db, send)).stopped).toBe('done');
+    expect((await drainQueue(db, send, create)).stopped).toBe('done');
     const settled = await bill(form);
     expect(settled).toMatchObject({
       status: 'conflict', message: `This bill was already issued as ${issued?.invoice_no}`,
@@ -388,10 +419,10 @@ describe('409: already issued', () => {
       }),
       { params: Promise.resolve({}) },
     )).json()) as { data: Customer };
-    const form = typedBill({ customer: created.data, customerText: 'Moving Works', lines: [{ ...f.blankLine(1, 'supply'), text: 'Stud', quantity: '1', rate: '10.01' }], packing: '', freight: '' });
+    const form = typedBill({ customer: created.data, customerText: 'Moving Works', lines: [{ ...f.typeGst(f.blankLine(1, 'supply'), '18'), text: 'Stud', quantity: '1', rate: '10.01' }], packing: '', freight: '' });
     await queue(form);
     wire = 'lose-reply';
-    await drainQueue(db, send);
+    await drainQueue(db, send, create);
     const [issued] = await invoicesOf(form);
     // The customer moves to Kerala: the recomputed total may differ (TOTAL_CHANGED), and "check the bill
     // and save again" would be a second invoice for the same goods.
@@ -400,7 +431,7 @@ describe('409: already issued', () => {
       if (item.draft) item.draft.expected_total_paise += 100;
     });
     wire = 'up';
-    await drainQueue(db, send);
+    await drainQueue(db, send, create);
     expect(await bill(form)).toMatchObject({ status: 'conflict', issued: { invoice_no: issued?.invoice_no } });
     expect(await invoicesOf(form)).toHaveLength(1);
   });
@@ -411,7 +442,7 @@ describe('409: already issued', () => {
     await db.offline_queue.where('temp_id').equals(form.tempId).modify((item) => {
       if (item.draft) item.draft.expected_total_paise += 100;
     });
-    await drainQueue(db, send);
+    await drainQueue(db, send, create);
     expect(await bill(form)).toMatchObject({ status: 'rejected', message: expect.stringContaining('₹1,239.00') as string });
     expect(await invoicesOf(form)).toEqual([]);
   });
@@ -485,9 +516,19 @@ describe('master copy', () => {
 describe('search falls back to this PC', () => {
   // The engine uses the PC's own database ('studflow').
   const pc = new store.OfflineDb();
+  const products: Record<'nut' | 'spacer' | 'coded' | 'off', number> = { nut: 0, spacer: 0, coded: 0, off: 0 };
   beforeAll(async () => {
     wire = 'up';
     calls = [];
+    const add = async (name: string, code: string | null = null, active = true): Promise<number> =>
+      (await pg.query<{ no: number }>(
+        `insert into public.stud_items (name, sku_code, hsn_sac, gst_rate_percent, default_rate_per_piece, is_active) values ($1, $2, '731816', 18, 4.5, $3) returning product_no as no`,
+        [name, code, active],
+      )).rows[0]?.no ?? 0;
+    products.nut = await add('Hex nut M12 GI');
+    products.spacer = await add(`Spacer ${products.nut} mm`);
+    products.coded = await add('Coupling', 'CPL-9');
+    products.off = await add('No longer sold', null, false);
     await pg.query(
       `insert into public.job_work_ledger (customer_id, party_dc_no, party_dc_date, material_grade, inward_weight_kg) values ($1, 'ME/501', $2, 'MS', 100)`,
       [md.tnCustomerId, TEST_TODAY],
@@ -500,7 +541,8 @@ describe('search falls back to this PC', () => {
     wire = answer;
     expect((await searchCustomers('murug')).map((option) => option.label)).toEqual(['Murugan Engineering Works']);
     expect(connection()).toBe('offline'); // which is what shows "Offline Mode"
-    expect((await searchStuds('m12x')).map((option) => option.label)).toEqual(['M12X150-EN8']);
+    expect((await searchStuds('m12x')).map((option) => option.label)).toEqual(['P0001 · Stud M12X150-EN8 · M12 × 150 mm · EN8 · Metric Coarse']);
+    expect((await searchStuds(String(products.nut)))[0]?.label).toBe(`${productCode(products.nut)} · Hex nut M12 GI`);
     expect((await openLots(md.tnCustomerId)).map((lot) => lot.party_dc_no)).toEqual(['ME/501']);
     expect(await openLots(md.kaCustomerId)).toEqual([]);
   });
@@ -510,6 +552,61 @@ describe('search falls back to this PC', () => {
     wire = 'down';
     const strip = (value: unknown): unknown => JSON.parse(JSON.stringify(value, (key, inner: unknown) => (key === 'pass' || key === 'name_lc' ? undefined : inner)));
     expect(strip([await searchCustomers('murug'), await searchStuds('M12X'), await openLots(md.tnCustomerId)])).toEqual(online);
+  });
+
+  it('finds a product by ID, name, code or size, and the same ones online and offline', async () => {
+    const { nut, spacer, coded, off } = products;
+    const typed = [String(nut), `p${nut}`, productCode(nut), String(coded), 'nut', 'CPL', 'cpl-9', 'm12', 'm12x150 en8', String(off), productCode(off), '900', 'P0900', 'nothing'];
+    const ask = async () => {
+      const found: Record<string, unknown> = {};
+      for (const q of typed) found[q] = (await searchStuds(q)).map(({ label, detail, loose, value }) => ({ label, detail, loose, no: value.product_no }));
+      return found;
+    };
+    const online = await ask();
+    for (const q of [String(nut), `p${nut}`, productCode(nut)]) {
+      expect((online[q] as unknown[])[0], q).toEqual({ label: `${productCode(nut)} · Hex nut M12 GI`, detail: '₹4.5/pc · HSN 731816 · GST 18%', loose: undefined, no: nut });
+    }
+    expect(online.nut).toMatchObject([{ no: nut }]);
+    expect(online['cpl-9']).toMatchObject([{ no: coded, loose: undefined }]);
+    expect(online['P0900']).toEqual([]);
+    expect(online[String(nut)]).toContainEqual(expect.objectContaining({ no: spacer, loose: true }));
+    wire = 'down';
+    expect(await ask()).toEqual(online);
+  });
+
+  it.each(['up', 'down'] as const)('never offers another product as if it were the ID that was typed (wire %s)', async (answer) => {
+    wire = answer;
+    const guesses = await searchStuds('150'); // no product 150, but a stud 150 mm long
+    expect(guesses.map((option) => option.value.product_no)).toEqual([1]);
+    expect(guesses.every((option) => option.loose)).toBe(true);
+    expect((await searchStuds('M12X150')).some((option) => option.loose)).toBe(false);
+    expect(await searchStuds(productCode(products.off))).toEqual([]); // switched off: not in a bill
+  });
+
+  it('gives AI fill only the one stud whose code has the words in it, never a guess', async () => {
+    expect((await onlyStudByCode('m12x150'))?.sku_code).toBe('M12X150-EN8');
+    expect(await onlyStudByCode('Hex nut M12 GI')).toBeNull(); // a product without a size
+    expect(await onlyStudByCode('M12X150 EN8')).toBeNull(); // its size, not its code
+    expect(await onlyStudByCode('nothing')).toBeNull();
+    const add = (n: number) =>
+      pg.query(
+        `insert into public.stud_items (sku_code, diameter_mm, length_mm, thread_type, material_grade, hsn_sac, gst_rate_percent, unit_weight_kg, unit_weight_is_manual)
+         select 'TWIN-' || i, 8, 45, 'Full thread', 'MS', '731815', 18, 0.02, true from generate_series(1, $1) as i`,
+        [n],
+      );
+    try {
+      await add(1);
+      expect((await onlyStudByCode('twin'))?.sku_code).toBe('TWIN-1');
+      await pg.query("delete from public.stud_items where sku_code like 'TWIN-%'");
+      await add(2);
+      expect(await onlyStudByCode('twin')).toBeNull();
+      // More matches than a list shows: one of them being a stud by code proves nothing.
+      await pg.query("insert into public.stud_items (name, hsn_sac, gst_rate_percent) select 'Twin ' || i, '7318', 18 from generate_series(1, 30) as i");
+      await pg.query("delete from public.stud_items where sku_code = 'TWIN-2'");
+      expect(await onlyStudByCode('twin')).toBeNull();
+    } finally {
+      await pg.query("delete from public.stud_items where sku_code like 'TWIN-%' or name like 'Twin %'");
+    }
   });
 
   it('does not make every keystroke wait for a dead network, and comes back by itself', async () => {
@@ -540,21 +637,79 @@ describe('search falls back to this PC', () => {
     if (!found || !lot) throw new Error('cache is empty');
     const form: f.BillForm = {
       ...f.newBill(`OFFLINE-${crypto.randomUUID()}`, TEST_TODAY, 'job_work'), customer: found.value, customerText: found.label, lots,
-      lines: [{ ...f.blankLine(1, 'job_work'), text: 'Threading', unit: 'kg', quantity: '40', rate: '12' }],
+      lines: [{ ...f.typeGst(f.blankLine(1, 'job_work'), '18'), text: 'Threading', unit: 'kg', quantity: '40', rate: '12' }],
       returns: { [lot.id]: { ...f.blankReturn, returned: '40' } },
     };
     await queue(form);
-    await drainQueue(db, send);
+    await drainQueue(db, send, create);
     wire = 'up';
-    expect((await drainQueue(db, send)).stopped).toBe('done');
+    expect((await drainQueue(db, send, create)).stopped).toBe('done');
     expect((await bill(form)).status).toBe('synced');
     const { rows } = await pg.query<{ kg: string }>('select outward_weight_kg::text as kg from public.job_work_ledger where id = $1', [lot.id]);
     expect(rows[0]?.kg).toBe('40.000');
   });
 });
 
-it('cached studs are searched by SKU in capitals', async () => {
-  await refreshMasters(db, fetchMasters);
-  expect((await cachedStuds(db, ' m12x150 ')).map((row) => row.sku_code)).toEqual(['M12X150-EN8']);
-  expect(await cachedOpenLots(db, 'nobody')).toEqual([]);
+describe('the copy of the product list', () => {
+  const kept = (product_no: number, over: Partial<store.CachedStud> = {}): store.CachedStud => ({
+    id: `00000000-0000-4000-8000-${String(product_no).padStart(12, '0')}`, product_no, name: `Lot ${product_no}`, sku_code: productCode(product_no), search_text: `LOT ${product_no} ${productCode(product_no)}`,
+    diameter_mm: null, length_mm: null, thread_type: null, material_grade: null, hsn_sac: '7318', gst_rate_percent: '18.00', unit_weight_kg: null, unit_weight_is_manual: false,
+    default_rate_per_piece: null, default_rate_per_kg: null, is_active: true, pass: 1, ...over,
+  });
+
+  it('is searched by SKU in capitals', async () => {
+    await refreshMasters(db, fetchMasters);
+    expect((await cachedStuds(db, ' m12x150 ')).map((row) => row.sku_code)).toEqual(['M12X150-EN8']);
+    expect(await cachedOpenLots(db, 'nobody')).toEqual([]);
+  });
+
+  it('gives the ID asked for first, then an own code, then the lowest IDs, twelve at most', async () => {
+    await db.cached_stud_items.bulkPut([
+      ...Array.from({ length: 60 }, (_, i) => kept(i + 1, { id: `00000000-0000-4000-8000-${String(900 - i).padStart(12, '0')}`, search_text: `LOT 60 ${productCode(i + 1)}` })),
+      kept(77, { sku_code: '60', search_text: 'CODED 60' }),
+    ]);
+    expect((await cachedStuds(db, '60')).map((row) => row.product_no)).toEqual([60, 77, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
+  it('has a product at once when it is saved on this PC, not at the next refresh', async () => {
+    await refreshMasters(db, fetchMasters);
+    const saved = kept(500, { name: 'Just saved', search_text: 'JUST SAVED P0500' });
+    await keepProduct(db, saved);
+    expect(await cachedStuds(db, '500')).toMatchObject([{ product_no: 500, name: 'Just saved' }]);
+    await keepProduct(db, { ...saved, name: 'Renamed', search_text: 'RENAMED P0500' });
+    expect(await cachedStuds(db, 'P0500')).toMatchObject([{ name: 'Renamed' }]);
+    await keepProduct(db, { ...saved, is_active: false });
+    expect(await cachedStuds(db, '500')).toEqual([]);
+    await keepProduct(db, saved);
+    await forgetProduct(db, saved.id);
+    expect(await cachedStuds(db, '500')).toEqual([]);
+    // It is a copy, not a second list: what the cloud does not have goes with the daily pass.
+    await keepProduct(db, saved);
+    await refreshMasters(db, fetchMasters, Date.now() + 86_500_000);
+    expect(await cachedStuds(db, '500')).toEqual([]);
+  });
+
+  it('kept by the version before IDs still finds by code, and is fetched again once', async () => {
+    await refreshMasters(db, fetchMasters);
+    await db.cached_stud_items.toCollection().modify((row: Partial<store.CachedStud>) => {
+      delete row.product_no;
+      delete row.name;
+      delete row.search_text;
+    });
+    await db.cache_state.toCollection().modify((state) => {
+      delete state.shape;
+    });
+    expect(await cachedStuds(db, 'm12x150')).toMatchObject([{ sku_code: 'M12X150-EN8', product_no: 0, name: null }]);
+
+    calls = [];
+    await refreshMasters(db, fetchMasters, Date.now() + 1000);
+    const asked = (kind: string) => calls.filter((path) => path.includes(`kind=${kind}`));
+    expect(asked('stud_items').some((path) => path.includes('since='))).toBe(false);
+    expect(asked('customers').every((path) => path.includes('since='))).toBe(true);
+    expect((await cachedStuds(db, '1'))[0]).toMatchObject({ product_no: 1, search_text: 'M12X150-EN8 M12X150 EN8' });
+
+    calls = [];
+    await refreshMasters(db, fetchMasters, Date.now() + 2000);
+    expect(calls.every((path) => path.includes('since='))).toBe(true);
+  });
 });

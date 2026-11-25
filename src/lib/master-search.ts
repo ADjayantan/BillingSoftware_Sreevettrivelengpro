@@ -1,9 +1,9 @@
-/** Finds customers, studs and lots: from the cloud, or from this PC when the cloud is silent. */
+/** Finds customers, products and lots: from the cloud, or from this PC when the cloud is silent. */
 import { api, isDown, type ApiResult } from './api-client';
 import { connection } from './connection';
 import { stateLabel } from './india';
-import { trimZeros } from './money';
 import { offlineEngine, type OfflineEngine } from './offline';
+import { findRank, isStud, productDetail, productLabel, typedProductNo } from './products';
 import type { Customer, JobWorkLot, StudItem } from './schemas/masters';
 
 export interface Option<T> {
@@ -11,7 +11,12 @@ export interface Option<T> {
   label: string;
   detail?: string;
   value: T;
+  /** A guess at what was typed, not it: Enter alone never takes one. */
+  loose?: true;
 }
+
+/** More than this is not a list to choose from. */
+const SHOWN = 12;
 
 /** Long enough for slow mobile data, short enough not to stall typing. */
 const SEARCH_TIMEOUT = 4000;
@@ -35,24 +40,45 @@ async function cloudOrCache<T>(path: string, cached: (engine: OfflineEngine) => 
   }
 }
 
+export const customerDetail = (customer: Customer): string =>
+  `${customer.gstin ?? 'Unregistered'} · ${stateLabel(customer.state_code)}${customer.is_sez ? ' · SEZ' : ''}`;
+
 export async function searchCustomers(q: string): Promise<Option<Customer>[]> {
-  const rows = await cloudOrCache(`/api/customers?${new URLSearchParams({ q }).toString()}`, (engine) => engine.cachedCustomers(q));
-  return rows
-    .filter((row) => row.is_active)
-    .slice(0, 12)
-    .map((row) => ({ key: row.id, label: row.name, detail: `${row.gstin ?? 'Unregistered'} · ${stateLabel(row.state_code)}${row.is_sez ? ' · SEZ' : ''}`, value: row }));
+  const [rows, here] = await Promise.all([
+    cloudOrCache(`/api/customers?${new URLSearchParams({ q }).toString()}`, (engine) => engine.cachedCustomers(q)),
+    offlineEngine().then((engine) => engine?.unsyncedCustomers(q) ?? []).catch(() => []),
+  ]);
+  const waiting = new Set(here.map((customer) => customer.id));
+  return [
+    ...here.map((customer) => ({ key: customer.id, label: customer.name, detail: `${customerDetail(customer)} · new, saved on this device`, value: customer })),
+    ...rows
+      .filter((row) => row.is_active && !waiting.has(row.id))
+      .map((row) => ({ key: row.id, label: row.name, detail: customerDetail(row), value: row })),
+  ].slice(0, SHOWN);
 }
 
 export async function searchStuds(q: string): Promise<Option<StudItem>[]> {
   if (q.trim() === '') return [];
   const rows = await cloudOrCache(`/api/stud-items?${new URLSearchParams({ q }).toString()}`, (engine) => engine.cachedStuds(q));
+  const byId = typedProductNo(q) !== null;
   return rows
     .filter((row) => row.is_active)
-    .slice(0, 12)
-    .map((row) => ({
-      key: row.id, label: row.sku_code, value: row,
-      detail: `${trimZeros(row.diameter_mm)} × ${trimZeros(row.length_mm)} mm · ${row.material_grade} · ₹${row.default_rate_per_piece ? `${trimZeros(row.default_rate_per_piece)}/pc` : row.default_rate_per_kg ? `${trimZeros(row.default_rate_per_kg)}/kg` : 'no rate'}`,
+    .map((row) => ({ row, rank: findRank(row, q) }))
+    .sort((a, b) => a.rank - b.rank) // stable: within a rank they stay in ID order
+    .slice(0, SHOWN)
+    .map(({ row, rank }) => ({
+      key: row.id, label: productLabel(row), detail: productDetail(row), value: row,
+      // Somebody who typed a number means that ID, not whatever has the number in its name.
+      ...(byId && rank >= 2 ? { loose: true as const } : {}),
     }));
+}
+
+/** For AI fill: the one stud whose own code has these words in it. Null when there are none or several. */
+export async function onlyStudByCode(words: string): Promise<StudItem | null> {
+  const options = await searchStuds(words);
+  if (options.length === SHOWN) return null; // cut short: there may be others
+  const found = options.filter(({ value }) => isStud(value) && value.sku_code.includes(words.trim().toUpperCase()));
+  return found.length === 1 ? (found[0]?.value ?? null) : null;
 }
 
 export const openLots = (customerId: string): Promise<JobWorkLot[]> =>

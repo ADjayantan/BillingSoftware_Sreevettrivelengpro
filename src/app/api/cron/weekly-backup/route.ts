@@ -28,7 +28,7 @@ const BACKUP_TABLES: ReadonlyArray<{
   },
   {
     name: 'stud_items',
-    columns: ['id', 'sku_code', 'diameter_mm', 'length_mm', 'thread_type', 'material_grade', 'hsn_sac', 'gst_rate_percent', 'unit_weight_kg', 'unit_weight_is_manual', 'default_rate_per_piece', 'default_rate_per_kg', 'is_active', 'created_at', 'updated_at'],
+    columns: ['id', 'product_no', 'name', 'sku_code', 'diameter_mm', 'length_mm', 'thread_type', 'material_grade', 'hsn_sac', 'gst_rate_percent', 'unit_weight_kg', 'unit_weight_is_manual', 'default_rate_per_piece', 'default_rate_per_kg', 'is_active', 'created_at', 'updated_at'],
   },
   {
     name: 'metal_rates',
@@ -41,13 +41,13 @@ const BACKUP_TABLES: ReadonlyArray<{
       'invoice_date', 'place_of_supply', 'is_sez', 'customer_snapshot', 'supplier_snapshot', 'subtotal', 'packing_charge',
       'delivery_charge', 'delivery_taxable', 'cgst', 'sgst', 'igst', 'charges_cgst', 'charges_sgst', 'charges_igst',
       'round_off', 'grand_total', 'amount_paid', 'payment_status', 'due_date', 'pdf_drive_url', 'drive_sync_pending',
-      'drive_file_id', 'dc_drive_url', 'dc_drive_file_id', 'notes', 'cancelled_at', 'cancellation_reason', 'created_by',
+      'drive_file_id', 'dc_drive_url', 'dc_drive_file_id', 'notes', 'po_no', 'po_date', 'cancelled_at', 'cancellation_reason', 'created_by',
       'created_at', 'updated_at',
     ],
   },
   {
     name: 'invoice_items',
-    columns: ['id', 'invoice_id', 'line_no', 'stud_item_id', 'description', 'hsn_sac', 'qty_pieces', 'total_weight_kg', 'billing_unit', 'unit_rate', 'tax_rate_percent', 'line_total', 'cgst_amount', 'sgst_amount', 'igst_amount', 'created_at'],
+    columns: ['id', 'invoice_id', 'line_no', 'stud_item_id', 'description', 'hsn_sac', 'qty_pieces', 'total_weight_kg', 'billing_unit', 'unit_rate', 'tax_rate_percent', 'line_total', 'cgst_amount', 'sgst_amount', 'igst_amount', 'material_grade', 'size_text', 'created_at'],
   },
   {
     name: 'deliveries',
@@ -63,7 +63,7 @@ const BACKUP_TABLES: ReadonlyArray<{
   },
   {
     name: 'company_profile',
-    columns: ['id', 'singleton', 'legal_name', 'gstin', 'address', 'state_code', 'phone', 'email', 'bank_name', 'bank_branch', 'bank_account_no', 'bank_ifsc', 'created_at', 'updated_at'],
+    columns: ['id', 'singleton', 'legal_name', 'tagline', 'gstin', 'address', 'factory_address', 'state_code', 'phone', 'office_phone', 'email', 'bank_name', 'bank_branch', 'bank_account_no', 'bank_ifsc', 'created_at', 'updated_at'],
   },
   {
     name: 'job_work_returns',

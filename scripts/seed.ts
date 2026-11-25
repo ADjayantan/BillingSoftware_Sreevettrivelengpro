@@ -64,6 +64,7 @@ export function buildSeed(json: unknown): SeedTable[] {
       table: 'stud_items',
       rows: seed.stud_items.map(({ unit_weight_kg, ...stud }) => ({
         ...stud,
+        gst_rate_percent: '18', // the database assumes no GST %; demo studs are all 18%
         unit_weight_kg:
           unit_weight_kg ?? weightForPieces({ diameter_mm: String(stud.diameter_mm), length_mm: String(stud.length_mm) }, 1),
         unit_weight_is_manual: unit_weight_kg !== null,

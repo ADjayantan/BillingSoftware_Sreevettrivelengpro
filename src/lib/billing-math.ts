@@ -9,8 +9,9 @@ export type BillingUnit = 'pcs' | 'kg';
 export type FreightPayer = 'seller' | 'buyer_to_pay';
 
 export interface WeightSpec {
-  diameter_mm: string;
-  length_mm: string;
+  /** Both null: a product without a size, which has a weight only if somebody measured it. */
+  diameter_mm: string | null;
+  length_mm: string | null;
   /** A positive measured mass replaces the steel formula; null or omitted selects it. */
   manual_unit_weight_kg?: string | null;
 }
@@ -121,11 +122,11 @@ function gcd(a: bigint, b: bigint): bigint {
 
 /** Exact kg per piece: never rounded, so lot weights and piece counts do not drift. */
 function unitMass(spec: WeightSpec): Fraction {
-  const diameter = parsePositive(spec.diameter_mm, 'diameter_mm');
-  const length = parsePositive(spec.length_mm, 'length_mm');
-  if (spec.manual_unit_weight_kg !== null && spec.manual_unit_weight_kg !== undefined) {
-    return parsePositive(spec.manual_unit_weight_kg, 'manual_unit_weight_kg');
-  }
+  const measured = spec.manual_unit_weight_kg ?? null;
+  if (spec.diameter_mm === null && spec.length_mm === null && measured !== null) return parsePositive(measured, 'manual_unit_weight_kg');
+  const diameter = parsePositive(spec.diameter_mm ?? '', 'diameter_mm');
+  const length = parsePositive(spec.length_mm ?? '', 'length_mm');
+  if (measured !== null) return parsePositive(measured, 'manual_unit_weight_kg');
   return {
     n: diameter.n * diameter.n * length.n,
     d: diameter.d * diameter.d * length.d * STEEL_DIVISOR,

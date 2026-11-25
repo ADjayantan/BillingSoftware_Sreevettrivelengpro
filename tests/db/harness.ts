@@ -56,6 +56,8 @@ export interface TestDbOptions {
   openSeries?: boolean;
   /** Supabase's default grants on new public tables: none (today) or everything (older projects). */
   platformGrants?: 'none' | 'legacy-grant-all';
+  /** Stop after this migration ('004'): a database in use, to run the next one on. */
+  upTo?: string;
 }
 
 /** Freeze the business date. CREATE OR REPLACE keeps the function's owner and grants. */
@@ -76,7 +78,7 @@ export async function openSeries(db: PGlite, fiscalYear: string, lastInv = 0, la
 }
 
 export async function createTestDb(options: TestDbOptions = {}): Promise<PGlite> {
-  const { today = TEST_TODAY, seedUsers = true, openSeries: open = true, platformGrants = 'none' } = options;
+  const { today = TEST_TODAY, seedUsers = true, openSeries: open = true, platformGrants = 'none', upTo = '999' } = options;
   const db = await PGlite.create();
   await db.exec(`set timezone = 'UTC'`); // Supabase databases run in UTC
   await db.exec(SHIM_SQL);
@@ -90,7 +92,7 @@ export async function createTestDb(options: TestDbOptions = {}): Promise<PGlite>
   }
 
   await db.exec(`set role ${MIGRATOR}`);
-  for (const migration of migrationFiles()) {
+  for (const migration of migrationFiles().filter(({ name }) => name.slice(0, 3) <= upTo)) {
     try {
       await db.exec(migration.sql);
     } catch (error) {

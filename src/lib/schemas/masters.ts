@@ -48,36 +48,57 @@ export const customerRow = z.object({
 });
 export type Customer = z.infer<typeof customerRow>;
 
-// ---- Stud master ------------------------------------------------------------
-export const studItemInput = z.object({
-  sku_code: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .pipe(z.string().regex(/^[A-Z0-9][A-Z0-9._/-]{0,39}$/, 'Use letters, digits and . _ / - (no spaces)')),
-  diameter_mm: c.positiveDecimal(3, 3).refine((value) => Number(value) <= 200, 'At most 200 mm'),
-  length_mm: c.positiveDecimal(2, 5).refine((value) => Number(value) <= 10_000, 'At most 10,000 mm'),
-  thread_type: c.requiredText(80),
-  material_grade: c.materialGrade,
-  hsn_sac: c.hsnSac,
-  gst_rate_percent: c.gstRate,
-  /** Null computes the steel formula; a value is a measured weight. */
-  manual_unit_weight_kg: c.positiveDecimal(6, 6).nullish().transform((value) => value ?? null),
-  default_rate_per_piece: c.rupees.nullish().transform((value) => value ?? null),
-  default_rate_per_kg: c.rupees.nullish().transform((value) => value ?? null),
-  is_active: z.boolean().default(true),
-});
+// ---- Products (studs are the ones with a size) ------------------------------
+const orNull = <T>(value: T | null | undefined): T | null => value ?? null;
+
+/** Optional. Without one the database keeps the product ID there. */
+const ownCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .refine((code) => code === '' || /^[A-Z0-9][A-Z0-9._/-]{0,39}$/.test(code), 'Use letters, digits and . _ / - (no spaces)')
+  .refine((code) => !/^P\d+$/.test(code),'Codes like P0007 are product IDs, given automatically: use another code')
+  .nullish()
+  .transform((code) => code || null);
+
+export const studItemInput = z
+  .object({
+    name: c.optionalText(120),
+    sku_code: ownCode,
+    diameter_mm: c.positiveDecimal(3, 3).refine((value) => Number(value) <= 200, 'At most 200 mm').nullish().transform(orNull),
+    length_mm: c.positiveDecimal(2, 5).refine((value) => Number(value) <= 10_000, 'At most 10,000 mm').nullish().transform(orNull),
+    thread_type: c.optionalText(80),
+    material_grade: c.materialGrade.nullish().transform(orNull),
+    hsn_sac: c.hsnSac,
+    /** Always typed by a person: no default anywhere. */
+    gst_rate_percent: z.string('Type the GST %').trim().min(1, 'Type the GST %').pipe(c.gstRate),
+    /** A measured weight. Null computes the steel formula for a stud, and is no weight for anything else. */
+    manual_unit_weight_kg: c.positiveDecimal(6, 6).nullish().transform(orNull),
+    default_rate_per_piece: c.rupees.nullish().transform(orNull),
+    default_rate_per_kg: c.rupees.nullish().transform(orNull),
+    is_active: z.boolean().default(true),
+  })
+  .refine(
+    (p) => new Set([p.diameter_mm, p.length_mm, p.thread_type, p.material_grade].map((value) => value === null)).size === 1,
+    'A stud needs its diameter, length, thread and grade',
+  )
+  .refine((p) => p.diameter_mm !== null || p.name !== null, 'Give the product a name');
 
 export const studItemRow = z.object({
   id: c.id,
+  /** The product ID, shown as P0007. */
+  product_no: z.number().int(),
+  name: z.string().nullable(),
   sku_code: z.string(),
-  diameter_mm: z.string(),
-  length_mm: z.string(),
-  thread_type: z.string(),
-  material_grade: z.string(),
+  /** Name, code and size in capitals: what searching looks in, here and on the PC. */
+  search_text: z.string(),
+  diameter_mm: z.string().nullable(),
+  length_mm: z.string().nullable(),
+  thread_type: z.string().nullable(),
+  material_grade: z.string().nullable(),
   hsn_sac: z.string(),
   gst_rate_percent: z.string(),
-  unit_weight_kg: z.string(),
+  unit_weight_kg: z.string().nullable(),
   unit_weight_is_manual: z.boolean(),
   default_rate_per_piece: z.string().nullable(),
   default_rate_per_kg: z.string().nullable(),
@@ -120,13 +141,20 @@ export type JobWorkLot = z.infer<typeof jobWorkRow>;
 // ---- Company profile --------------------------------------------------------
 export const companyInput = z.object({
   legal_name: c.requiredText(120),
+  tagline: c.optionalText(160),
   gstin: z
     .string()
     .trim()
     .toUpperCase()
     .pipe(z.string().refine((value) => value.startsWith('33') && isValidGstin(value), 'Enter a valid Tamil Nadu (33) GSTIN')),
   address: c.requiredText(500),
+  factory_address: c.optionalText(500),
   phone: c.optionalPhone,
+  /** Kept as it stands on the bill: '0422 - 1234567'. */
+  office_phone: z
+    .union([z.literal('').transform(() => null), z.null(), z.string().trim().regex(/^(?=.*\d{4})[0-9+()/, -]{6,40}$/, 'Use digits, for example 0422 - 1234567')])
+    .optional()
+    .transform((value) => value ?? null),
   email: z.union([z.literal('').transform(() => null), z.null(), z.email().max(120)]).optional().transform((value) => value ?? null),
   bank_name: c.optionalText(80),
   bank_branch: c.optionalText(80),
@@ -142,10 +170,13 @@ export const companyInput = z.object({
 
 export const companyRow = z.object({
   legal_name: z.string(),
+  tagline: z.string().nullable(),
   gstin: z.string(),
   address: z.string(),
+  factory_address: z.string().nullable(),
   state_code: z.string(),
   phone: z.string().nullable(),
+  office_phone: z.string().nullable(),
   email: z.string().nullable(),
   bank_name: z.string().nullable(),
   bank_branch: z.string().nullable(),

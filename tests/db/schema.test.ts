@@ -78,7 +78,9 @@ describe('migration', () => {
     expect(rows).toEqual([
       { relname: 'app_users', rls: true },
       { relname: 'audit_log', rls: true },
+      { relname: 'book_changes', rls: true },
       { relname: 'document_sequences', rls: true },
+      { relname: 'month_books', rls: true },
     ]);
   });
 
@@ -126,9 +128,21 @@ describe('migration', () => {
       'private.is_valid_gstin',
     ];
     expect(rows.filter((r) => r.role === 'anon')).toEqual([]);
-    expect(rows.filter((r) => r.role === 'service_role').map((r) => r.fn)).toEqual(helpers);
+    expect(rows.filter((r) => r.role === 'service_role').map((r) => r.fn)).toEqual([
+      ...helpers,
+      'public.book_claim',
+      'public.book_done',
+      'public.book_failed',
+      'public.book_hold',
+      'public.book_set_file',
+    ]);
     expect(rows.filter((r) => r.role === 'authenticated').map((r) => r.fn)).toEqual([
       ...helpers,
+      'private.product_code',
+      'public.bill_in_book',
+      'public.book_due',
+      'public.book_months',
+      'public.book_retry',
       'public.record_payment',
       'public.sync_invoice',
       'public.void_payment',
@@ -618,8 +632,8 @@ describe('master data constraints', () => {
     queryAs(
       ctx.db,
       ACTORS.staff,
-      `insert into public.stud_items (sku_code, diameter_mm, length_mm, thread_type, material_grade, unit_weight_kg, unit_weight_is_manual)
-       values ($1, $2, $3, 'Metric Coarse', $4, $5, $6)`,
+      `insert into public.stud_items (sku_code, diameter_mm, length_mm, thread_type, material_grade, hsn_sac, gst_rate_percent, unit_weight_kg, unit_weight_is_manual)
+       values ($1, $2, $3, 'Metric Coarse', $4, '731815', 18, $5, $6)`,
       [sku, d, l, grade, weight, manual],
     );
 

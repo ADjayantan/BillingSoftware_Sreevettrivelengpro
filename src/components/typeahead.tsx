@@ -6,7 +6,7 @@ import { focusNext } from './enter-advance';
 import { useConnection } from './use-connection';
 
 /** Type, arrow, Enter. Asks the server as you type, so no master list sits in memory. */
-export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFocus = false, inputLabel, onEmptyEnter }: {
+export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFocus = false, inputLabel, onEmptyEnter, add }: {
   text: string;
   onText: (text: string) => void;
   search: (query: string) => Promise<Option<T>[]>;
@@ -16,6 +16,8 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
   inputLabel: string;
   /** Enter on an empty box, e.g. "no more lines": return true when handled. */
   onEmptyEnter?: () => boolean;
+  /** The last entry of the list: what was typed is not in it. Enter takes it when nothing was found. */
+  add?: { label: (text: string) => string; onAdd: (text: string) => void } | undefined;
 }) {
   const listId = useId();
   const offline = useConnection() === 'offline';
@@ -26,6 +28,8 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pending = useRef(false);
   useEffect(() => () => clearTimeout(timer.current), []);
+  const adding = add && text.trim() !== '' ? add : undefined;
+  const count = options.length + (adding ? 1 : 0);
 
   function lookUp(query: string): void {
     clearTimeout(timer.current);
@@ -35,11 +39,16 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
       void search(query).then((found) => {
         if (ticket !== latest.current) return; // a newer keystroke already asked
         pending.current = false;
-        setOptions(found);
-        setActive(0);
-        setOpen(true);
+        show(found);
       });
     }, 150);
+  }
+
+  /** A loose option is a guess: it is there to choose, but Enter alone does not take it. */
+  function show(found: Option<T>[]): void {
+    setOptions(found);
+    setActive(found[0]?.loose ? -1 : 0);
+    setOpen(true);
   }
 
   function pick(option: Option<T>): void {
@@ -49,13 +58,23 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
     onPick(option);
   }
 
+  function addTyped(typed: string): void {
+    latest.current += 1;
+    pending.current = false;
+    setOpen(false);
+    add?.onAdd(typed);
+  }
+
   /** Enter straight after typing must not skip the suggestion that is still loading. */
   async function settle(input: HTMLInputElement): Promise<void> {
     clearTimeout(timer.current);
     const ticket = ++latest.current;
-    const [best] = await search(input.value);
+    const found = await search(input.value);
     if (ticket !== latest.current) return;
     pending.current = false;
+    const [best] = found;
+    if (best?.loose) return show(found);
+    if (!best && adding) return addTyped(input.value);
     setOpen(false);
     if (best) pick(best);
     if (document.activeElement === input) focusNext(input);
@@ -66,8 +85,8 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       if (!open) return lookUp(text);
-      const step = event.key === 'ArrowDown' ? 1 : -1;
-      setActive((active + step + options.length) % Math.max(1, options.length));
+      const next = event.key === 'ArrowDown' ? active + 1 : Math.max(active, 0) - 1;
+      setActive((next + count) % Math.max(1, count));
     } else if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
       if (text.trim() === '') {
         setOpen(false);
@@ -84,6 +103,12 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
         event.preventDefault();
         pick(option);
         focusNext(input);
+      } else if (adding && open && active === options.length) {
+        event.preventDefault();
+        addTyped(text);
+      } else if (adding && !open) {
+        event.preventDefault(); // nothing was chosen yet: not a reason to move on
+        lookUp(text);
       } else {
         setOpen(false);
       }
@@ -101,7 +126,7 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
         aria-expanded={open}
         aria-controls={listId}
         aria-autocomplete="list"
-        aria-activedescendant={open && options[active] ? `${listId}-${active}` : undefined}
+        aria-activedescendant={open && active >= 0 && active < count ? `${listId}-${active}` : undefined}
         autoComplete="off"
         autoFocus={autoFocus}
         placeholder={placeholder}
@@ -116,7 +141,7 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
       />
       {open ? (
         <ul id={listId} role="listbox" aria-label={inputLabel} className="absolute z-20 mt-1 max-h-80 w-full min-w-72 overflow-auto rounded-md border border-line bg-card shadow-lg">
-          {options.length === 0 ? <li className="px-3 py-2 text-muted">No match</li> : null}
+          {options.length === 0 ? <li role="presentation" className="px-3 py-2 text-muted">No match</li> : null}
           {options.map((option, i) => (
             <li
               key={option.key}
@@ -133,7 +158,21 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
               {option.detail ? <span className="block text-sm opacity-80">{option.detail}</span> : null}
             </li>
           ))}
-          {offline ? <li role="presentation" className="border-t border-line px-3 py-1 text-sm text-muted">Offline Mode · from this PC</li> : null}
+          {adding ? (
+            <li
+              id={`${listId}-${options.length}`}
+              role="option"
+              aria-selected={active === options.length}
+              className={`cursor-pointer border-t border-line px-3 py-2 font-semibold ${active === options.length ? 'bg-accent text-accent-ink' : 'text-accent'}`}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                addTyped(text);
+              }}
+            >
+              {adding.label(text.trim())}
+            </li>
+          ) : null}
+          {offline ? <li role="presentation" className="border-t border-line px-3 py-1 text-sm text-muted">Offline Mode · from this device</li> : null}
         </ul>
       ) : null}
     </div>

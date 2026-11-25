@@ -1,4 +1,5 @@
 import { body, mustAffect, parse, route } from '@/lib/api/http';
+import { booksLater } from '@/lib/month-books';
 import { id } from '@/lib/schemas/common';
 import { cancelInput } from '@/lib/schemas/invoices';
 
@@ -12,5 +13,6 @@ export const POST = route<{ id: string }>(async ({ request, supabase, params }) 
       .eq('id', parse(id, params.id))
       .select('id'),
   );
+  booksLater();
   return { cancelled: true };
 });

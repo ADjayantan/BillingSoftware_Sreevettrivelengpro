@@ -145,8 +145,8 @@ describe('billing-math.ts and sync_invoice agree to the paisa', () => {
       const insert = queryAs(
         db,
         ACTORS.staff,
-        `insert into public.stud_items (sku_code, diameter_mm, length_mm, thread_type, material_grade, unit_weight_kg)
-         values ($1, $2, $3, 'Metric', 'EN8', $4)`,
+        `insert into public.stud_items (sku_code, diameter_mm, length_mm, thread_type, material_grade, hsn_sac, gst_rate_percent, unit_weight_kg)
+         values ($1, $2, $3, 'Metric', 'EN8', '731815', 18, $4)`,
         [`GEN-${i}`, spec.diameter_mm, spec.length_mm, weightForPieces(spec, 1)],
       );
       expect(await outcome(insert), JSON.stringify(spec)).toMatch(/^accepted/);

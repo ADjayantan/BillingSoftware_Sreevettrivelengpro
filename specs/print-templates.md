@@ -18,7 +18,7 @@ Build the view from the posted invoice, its item rows and its linked delivery. P
 | Block | GST tax invoice | Delivery challan |
 | --- | --- | --- |
 | Identity | Legal supplier name/address/GSTIN. Invoice number unique per financial year, up to 16 characters, e.g. `INV/26-27/0001`. Issue date, DC reference, copy designation, due date. | Issuer name/address/GSTIN, DC serial (up to 16 characters for Rule 55), date, movement reason, dispatch date/time, status as of issue, linked invoice when issued, party DC for job work. |
-| Parties | **Bill to** with name, address, GSTIN/UIN and state/code. **Ship to** with actual consignee and full delivery address. Print place-of-supply state and code, and reverse charge Yes/No. | **Consignor / Dispatch from** and **Consignee / Deliver to** with names, physical addresses and GSTIN/UIN as applicable. Include place of supply for inter-state movement. |
+| Parties | **To** with name, address, GSTIN/UIN and state/code. **Delivery at** with the full delivery address when it is another one. Print place-of-supply state and code, and reverse charge Yes/No. | **Consignor / Dispatch from** and **Consignee / Deliver to** with names, physical addresses and GSTIN/UIN as applicable. Include place of supply for inter-state movement. |
 | Transport | DC reference and the same compact transport strip as the linked DC when dispatch details are available. | Mode, Vehicle No, driver name, Driver Phone, transporter, LR No (lorry receipt), dispatch status/date and e-way bill number when applicable. If self-collected, print “Self-collection”. Print “Pending” for an outstanding LR or “N/A” when none will be issued. |
 | Merchandise or service | Item description with grade, size, thread and HSN/SAC. Quantity and UQC (e.g. PCS or KGS), unit price and taxable line value. Show pieces/weight as supporting measurements when relevant, with the actual billing unit unmistakable. Show any recorded discount and pre-discount value if applicable. | Goods description, goods HSN, pieces, net kg and UQC. For a statutory DC include the declared taxable value of transported goods, and applicable rate/head amounts when transportation is for supply. For an ordinary dispatch copy, reference the invoice for value. |
 | Closing | Item subtotal, applicable supplier packing and delivery, taxable value, tax by head, signed round-off, **Invoice total**, amount in words. **For [legal supplier] · Authorised signatory** and optional recipient acknowledgement. | For job work show inward kg, returned kg **this DC**, recorded scrap/wastage kg and balance held after posting. Identify actual scrap sent back as a separate goods row if carried. Print declared movement value and its words when applicable. **Dispatched by** and **Received by** with name/signature/date. |
@@ -33,111 +33,54 @@ The invoice particulars follow Rule 46. For ordinary paper goods invoices, label
 
 ## Shared print layout
 
-The following Mustache-style HTML defines the field slots and row order for both forms. Use escaped text interpolation, including for addresses. Supply `linked`, `taxBand`, `closingRows` and the other collections as ordered display rows. A label/value pair represents one entry in its current section. Each `article` is a complete document copy. Keep the document in normal flow.
+The bill and the challan are drawn as the owner's own printed bill (`own-bill.md`). `src/lib/print-documents.ts` binds the issued snapshot to what must be said; `src/lib/bill-sheets.ts` draws it as pages of text, lines and shapes in units of its own; `src/components/sheets.tsx` writes the pages as SVG for the screen and the office printer, `src/lib/sheet-pdf.ts` as PDF for Google Drive. Both show the same drawing.
 
-```html
-<main class="packet" data-paper="{{paper}}">
-  {{#documents}}
-  <article class="sheet">
-    <header class="pair">
-      <div><h1>{{title}}</h1><strong>{{issuerName}}</strong>
-        <div>{{issuerAddress}}</div><div>GSTIN {{issuerGstin}}</div></div>
-      <div><strong>{{number}}</strong><div>{{issueDate}}</div><div>{{copyLabel}}</div>
-        {{#linked}}<div>{{label}} · {{value}}</div>{{/linked}}</div>
-    </header>
-    <section class="pair ruled">
-      {{#parties}}<div><b>{{role}}</b><div>{{name}}</div><div>{{address}}</div>
-        <div>{{stateAndCode}}</div><div>{{registration}}</div></div>{{/parties}}
-    </section>
-    <section class="strip">{{#facts}}<span><b>{{label}}</b> {{value}}</span>{{/facts}}</section>
-    {{#irp}}<section class="irp keep"><img alt="Signed e-invoice QR" src="{{signedQrImage}}">
-      <div><b>IRN</b><div>{{irn}}</div></div></section>{{/irp}}
-    {{#declarationText}}<p>{{.}}</p>{{/declarationText}}
-    <table class="lines">
-      <colgroup><col class="item"><col class="qty"><col class="rate"><col class="amount"></colgroup>
-      <thead><tr><th class="ref" colspan="4">{{title}} · {{number}} · {{copyLabel}}</th></tr>
-        <tr>{{#columns}}<th scope="col" class="{{align}}">{{label}}</th>{{/columns}}</tr></thead>
-      <tbody>{{#items}}<tr><td>{{description}}<small>{{codeLabel}} {{code}}</small></td>
-        <td class="num">{{quantity}}<small>{{quantityDetail}}</small></td>
-        <td class="num">{{third}}<small>{{thirdDetail}}</small></td>
-        <td class="num">{{fourth}}</td></tr>{{/items}}</tbody>
-    </table>
-    {{#taxBand}}
-    <table class="tax"><thead><tr><th class="ref" colspan="{{count}}">GST summary · {{number}}</th></tr>
-      <tr>{{#columns}}<th scope="col" class="{{align}}">{{label}}</th>{{/columns}}</tr></thead>
-      <tbody>{{#rows}}<tr>{{#cells}}<td class="{{align}}">{{text}}</td>{{/cells}}</tr>{{/rows}}</tbody>
-    </table>{{/taxBand}}
-    <footer class="keep closing">
-      <b>{{closingTitle}} · {{number}}</b>
-      {{#closingRows}}<div class="sum"><span>{{label}}</span><strong>{{value}}</strong></div>{{/closingRows}}
-      {{#total}}<div class="sum total"><b>{{label}}</b><b>{{value}}</b></div>{{/total}}
-      {{#words}}<p><b>{{label}}</b> {{value}}</p>{{/words}}
-    <div class="pair signs">
-      {{#signatures}}<div><div>{{organisation}}</div><div class="signline">{{role}}</div>
-        <small>{{nameDateLabel}}</small></div>{{/signatures}}
-    </div>
-    </footer>
-  </article>
-  {{/documents}}
-</main>
-```
+From top to bottom:
 
-**Invoice binding.** Use the four column labels **Description / HSN or SAC**, **Billed qty**, **Rate ₹/unit**, **Taxable ₹**. In the rate cell show the denominator (e.g. “per kg”). Add the tax table after the last item. Use **GST rate | Taxable ₹ | CGST % / ₹ | SGST % / ₹** or **GST rate | Taxable ₹ | IGST % / ₹**. Each head cell shows e.g. “9% · 90.00”. The closing rows reconcile the posted subtotal, charges, taxable value, tax and signed round-off to the invoice total. For a tax bucket shared by multiple HSNs show its posted tax once. Use the service description and service SAC on labour rows.
+| Part | Invoice | Challan |
+| --- | --- | --- |
+| Above the frame | Copy designation; “Page 1 of 2” when there is more than one. | Same. |
+| Head | Gear, company name, line under the name, office and factory address, telephone, mobile, e-mail: from the issued snapshot. | Same. |
+| Left | **To, M/s.** name, address, phone. **Party GSTIN No.** and **State** with code. | **Deliver to** or **Principal / deliver to**: the delivery address. |
+| Right | Company GSTIN, **TAX INVOICE** (and **JOB WORK**), No., Date, **DC No. dt**, **Party DC dt** of a single lot, **P. O. No. dt**. | **DELIVERY CHALLAN**, **SALE DISPATCH** or **JOB-WORK RETURN**, No., Date, **Invoice No. dt**, **Party DC dt**, **P. O. No. dt**. |
+| Notes, only when there are any | CANCELLED with date and reason, SEZ declaration, **Delivery at** when it is not the address above, several party DCs, the note on the bill. | CANCELLED. |
+| Rows | SL. No., HSN CODE (SAC CODE for services), PARTICULARS, RATE per unit, QTY. with its unit and the other measurement, AMOUNT in Rs. and P. On a bill of several GST rates the rate stands under each code. Nine rows at least. | PIECES, NET KG and VALUE or REMARKS instead of rate, quantity and amount. A job-work row names its party DC; of several lots each has its inward, scrap and balance kg. |
+| Below, left | **Rupees** in words. Place of supply, reverse charge, due date, and how the goods go. | Declared value in words; reason, place of supply when inter-state, mode, vehicle, driver, phone, LR, status. |
+| Below, right | SUB TOTAL, CGST, SGST, IGST, R. Off; Packing, Delivery and Taxable value only with charges; each GST rate with what it is on when there are several. | Value as per invoice, freight the buyer pays directly, or the weights of the lot. |
+| Closing | **TOTAL AMOUNT**; bank details, E & O E; **For [company] · Authorised Signatory**. | **DECLARED GOODS VALUE** when every lot has one; **Received by**, **For [company] · Dispatched by**. |
 
-**DC binding.** Use **Goods / HSN**, **Pieces**, **Net kg**, **Declared value ₹** for a valued DC. For an unvalued internal dispatch copy use **Packages / remarks** in the fourth column. Use the tax table only when the movement document requires tax details. Include `Vehicle No`, `Driver Phone` and `LR No` as separate facts. In the closing block identify weights and buyer-direct charges by name and unit. Label any value in the total slot **Declared goods value**. A DC has no invoice balance or demand for payment.
+**Text.** Every piece of text is given its width, measured with the letters of Helvetica (the widths of Arial), so another font cannot run over. A value too long for its place gets smaller letters, then narrower ones; it is never cut. Letters Helvetica does not have stand on the printed page as they are; in the PDF Tamil is written in English letters and ₹ as Rs.
 
-### CSS for both formats
+**Pages.** The rows flow over as many pages as they need. The closing part stays in one piece, with at least one row above it. A following page starts with the company, the bill’s number and date, and repeats the heading of the rows.
 
-Load the shared CSS after Tailwind’s base styles. Equivalent utilities for screen controls are `print:hidden`, `text-right` and `tabular-nums`. The print root has `data-paper="a4"` or `data-paper="a5"`. Include exactly one matching page-size rule after the shared CSS for each print job.
+### CSS and page size
+
+The print root has `data-paper="a4"` or `data-paper="a5"`. The frame is 100 units wide: on A4 a unit is 1.9 mm with a margin of 10 mm, on A5 1.34 mm with 7 mm. The margins are in the drawing: `@page` has none, so the browser has no room for a header or footer of its own. Include exactly one matching page rule for each print job. Print at 100% scale.
 
 ```css
-* { box-sizing: border-box; }
-.packet { color: #161616; font: 10pt/1.28 Inter, Arial, "Nirmala UI", sans-serif; }
-.sheet { width: 100%; overflow-wrap: anywhere; }
-.sheet h1 { margin: 0 0 1.5mm; font-size: 16pt; line-height: 1.1; }
-.sheet p { margin: 1.5mm 0; }
-.sheet small { display: block; font-size: 0.92em; }
-.pair { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 5mm; }
-.ruled, .strip, .closing { border-top: 0.25mm solid #666; margin-top: 2mm; padding-top: 2mm; }
-.strip { display: flex; flex-wrap: wrap; gap: 1mm 4mm; }
-.lines, .tax { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 2.5mm; }
-.lines .item { width: 43%; } .lines .qty { width: 16%; }
-.lines .rate { width: 18%; } .lines .amount { width: 23%; }
-.sheet th, .sheet td { padding: 1.3mm; text-align: left; vertical-align: top; border-bottom: 0.2mm solid #999; }
-.sheet .num, .sum strong, .total b:last-child { text-align: right; font-variant-numeric: tabular-nums; }
-.sheet .ref { font-size: 0.92em; font-weight: normal; }
-.sum { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 3mm; }
-.total { margin-top: 1mm; padding-top: 1mm; border-top: 0.35mm solid; font-size: 1.16em; }
-.signs { margin-top: 3mm; }
-.signline { margin-top: 9mm; border-top: 0.2mm solid; padding-top: 1mm; }
-.irp { display: flex; align-items: center; gap: 3mm; margin-top: 2mm; }
-.irp img { width: 36mm; height: 36mm; object-fit: contain; flex: none; }
-.packet[data-paper="a5"] { font-size: 9pt; }
-.packet[data-paper="a5"] h1 { font-size: 13pt; }
-.packet[data-paper="a5"] :is(th, td) { padding: 0.9mm; }
+.packet { color: #111111; }
+.sheet svg { display: block; width: 100%; height: auto; }
 
 @media print {
   html, body { margin: 0; padding: 0; background: white; }
   .screen-only { display: none !important; }
-  .packet, .sheet { display: block; width: auto; height: auto; overflow: visible; box-shadow: none; }
-  .sheet + .sheet { page-break-before: always; break-before: page; }
-  thead { display: table-header-group; }
-  tr, .keep, .pair { page-break-inside: avoid; break-inside: avoid; }
-  h1, h2 { break-after: avoid; }
+  /* A millimetre less than the paper: rounding must not start an empty page. */
+  .sheet { overflow: hidden; break-inside: avoid; }
+  .sheet + .sheet { break-before: page; }
+  .packet[data-paper="a4"] .sheet { width: 210mm; height: 296mm; }
+  .packet[data-paper="a5"] .sheet { width: 148mm; height: 209mm; }
 }
 ```
 
 ```css
 /* A4 job */
-@page { size: A4 portrait; margin: 10mm; }
+@page { size: A4 portrait; margin: 0; }
 ```
 
 ```css
 /* Half-A4 job */
-@page { size: A5 portrait; margin: 7mm; }
+@page { size: A5 portrait; margin: 0; }
 ```
-
-Allow long tables to flow across pages. The item and GST headers repeat the document number. Keep the compact totals, words and signatures together. This block carries its own document reference if it starts a new page. Long descriptions wrap. If one description exceeds the available height of a page, split it into a labelled continuation row with blank quantity and amount cells. Use 100% scale with browser headers/footers off. In headless PDF output, prefer the CSS page size and wait for fonts and the signed QR image to load.
 
 ## Print acceptance cases
 

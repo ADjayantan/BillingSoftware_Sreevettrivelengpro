@@ -1,7 +1,9 @@
 // Route handlers end to end: real Zod, real supabase-js, real SQL and RLS (PGlite).
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { PGlite } from '@electric-sql/pglite';
 import { createClient as createSupabase } from '@supabase/supabase-js';
+import { productCode } from '@/lib/products';
 import { ACTORS, GSTIN, createTestDb, newTempId, seedMasterData, type Actor, type MasterData } from '../db/harness';
 import { pgliteFetch } from '../support/postgrest';
 
@@ -114,7 +116,98 @@ describe('customers', () => {
   });
 });
 
-describe('stud master', () => {
+describe('a customer made at the counter', () => {
+  const counter = (over: Record<string, unknown> = {}) => ({
+    id: randomUUID(), different_from: [], name: 'Sri Balaji Fabricators', gstin: '', phone: '', state_code: '33', is_sez: false, credit_days: 30, address: '', opening_balance: '0', is_active: true, ...over,
+  });
+  const add = async (json: Record<string, unknown>, as: Actor = ACTORS.staff) => call((await import('@/app/api/customers/route')).POST, { json, as });
+  const named = async (name: string) => (await db.query<{ id: string }>('select id from public.customers where name = $1', [name])).rows.map((row) => row.id);
+  const details = (reply: Reply) => (reply.error as unknown as { details?: { existing?: { id: string }; candidates?: { id: string }[]; same_name?: boolean } }).details;
+
+  it('keeps the id the device gave it, however often it is sent', async () => {
+    const body = counter();
+    const first = await add(body);
+    expect(first).toMatchObject({ status: 201, data: { id: body.id, name: 'Sri Balaji Fabricators', gstin: null, state_code: '33', credit_days: 30, opening_balance: '0.00' } });
+    expect((await add(body)).data).toEqual(first.data); // the reply was lost: sent again
+    const both = await Promise.all([add(counter({ id: '00000000-0000-4000-8000-0000000000aa', name: 'Double Click Works' })), add(counter({ id: '00000000-0000-4000-8000-0000000000aa', name: 'Double Click Works' }))]);
+    expect(both.map((reply) => reply.data.id)).toEqual(['00000000-0000-4000-8000-0000000000aa', '00000000-0000-4000-8000-0000000000aa']);
+    expect([await named('Sri Balaji Fabricators'), await named('Double Click Works')].map((ids) => ids.length)).toEqual([1, 1]);
+  });
+
+  it('is never overwritten by sending other details under the same id', async () => {
+    const body = counter({ name: 'Original Party' });
+    await add(body);
+    expect((await add({ ...body, name: 'Changed Party', phone: '9000000009' })).data).toMatchObject({ name: 'Original Party', phone: null });
+  });
+
+  it('is not made when its GSTIN is already in the books: that customer is offered', async () => {
+    const reply = await add(counter({ name: 'Murugan Engg', gstin: GSTIN.tn, address: 'x' }));
+    expect(reply).toMatchObject({ status: 409, error: { code: 'CUSTOMER_EXISTS', message: 'This GSTIN is already Murugan Engineering Works' } });
+    expect(details(reply)).toMatchObject({ existing: { id: md.tnCustomerId, name: 'Murugan Engineering Works', is_active: true }, same_name: false });
+    expect(details(await add(counter({ name: 'MURUGAN ENGINEERING WORKS', gstin: GSTIN.tn, address: 'x' })))).toMatchObject({ same_name: true });
+    expect(await named('Murugan Engg')).toEqual([]);
+  });
+
+  it('is offered even when it is switched off, so there is a way out', async () => {
+    const off = await add(counter({ name: 'Switched Off Ltd', gstin: '27AAPFU0939F1ZV', state_code: '27', address: 'Pune' }));
+    await db.query('update public.customers set is_active = false where id = $1', [off.data.id]);
+    expect(details(await add(counter({ name: 'Other name', gstin: '27AAPFU0939F1ZV', state_code: '27', address: 'Pune' })))).toMatchObject({ existing: { id: off.data.id, is_active: false } });
+  });
+
+  it('is not made beside a like-sounding one, or one with the same phone, until the owner says it is different', async () => {
+    const known = await add(counter({ name: 'Anbu Tools', phone: '9443300001' }));
+    const alike = counter({ name: 'Anbu Tool (P) Ltd' });
+    const asked = await add(alike);
+    expect(asked).toMatchObject({ status: 409, error: { code: 'CUSTOMER_SIMILAR' } });
+    expect(details(asked)?.candidates?.map((one) => one.id)).toEqual([known.data.id]);
+    const sharing = await add(counter({ name: 'Quite Another', phone: '+91 94433 00001' }));
+    expect(details(sharing)?.candidates).toMatchObject([{ id: known.data.id, name: 'Anbu Tools', phone: '9443300001' }]);
+    expect(await named('Anbu Tool (P) Ltd')).toEqual([]);
+
+    expect(await add({ ...alike, different_from: [known.data.id] })).toMatchObject({ status: 201, data: { id: alike.id } });
+    const third = await add(counter({ name: 'ANBU TOOLS' }));
+    expect(details(third)?.candidates?.map((one) => one.id).sort()).toEqual([known.data.id, alike.id].sort());
+    // Ruling out one of two does not rule out the other.
+    expect(details(await add(counter({ name: 'ANBU TOOLS', different_from: [known.data.id] })))?.candidates?.map((one) => one.id)).toEqual([alike.id]);
+  });
+
+  it('is not confused with customers that are switched off', async () => {
+    const old = await add(counter({ name: 'Retired Party' }));
+    await db.query('update public.customers set is_active = false where id = $1', [old.data.id]);
+    expect(await add(counter({ name: 'Retired Party' }))).toMatchObject({ status: 201 });
+  });
+
+  it('is compared with every customer, not the first thousand', async () => {
+    await db.exec(`insert into public.customers (name, state_code, credit_days) select 'Crowd ' || lpad(i::text, 5, '0'), '33', 0 from generate_series(1, 1200) as i`);
+    const { rows } = await db.query<{ id: string }>(`insert into public.customers (id, name, state_code, credit_days) values ('ffffffff-ffff-4fff-8fff-ffffffffffff', 'Zulu Precision', '33', 0) returning id`);
+    expect(details(await add(counter({ name: 'Zulu Precision' })))?.candidates?.map((one) => one.id)).toEqual([rows[0]?.id]);
+    await db.exec(`delete from public.customers where name like 'Crowd %' or name = 'Zulu Precision'`);
+  });
+
+  it('follows the same rules as any customer', async () => {
+    expect(await add(counter({ name: '' }))).toMatchObject({ status: 400 });
+    expect(await add(counter({ gstin: '33ABCPV1357D1ZY', address: 'x' }))).toMatchObject({ status: 400, error: { message: expect.stringContaining('not valid') } });
+    expect(await add(counter({ id: 'nope' }))).toMatchObject({ status: 400 });
+    expect(await add(counter({ name: 'Stranger Danger' }), ACTORS.stranger)).toMatchObject({ status: 403 });
+  });
+
+  it('leaves the Customers page as it was: no id, no questions', async () => {
+    const plain = { ...counter({ name: 'Anbu Tools' }) } as Record<string, unknown>;
+    delete plain.id;
+    delete plain.different_from;
+    expect(await add(plain)).toMatchObject({ status: 201 });
+  });
+
+  it('is found by phone and by GSTIN too', async () => {
+    const { GET } = await import('@/app/api/customers/route');
+    const find = async (q: string) => ((await call(GET, { search: `?${new URLSearchParams({ q }).toString()}` })).data.rows as { name: string }[]).map((row) => row.name);
+    expect(await find('9443300001')).toEqual(['Anbu Tools']);
+    expect(await find(GSTIN.tn.toLowerCase())).toEqual(['Murugan Engineering Works']);
+    expect(await find('murugan eng')).toEqual(['Murugan Engineering Works']);
+  });
+});
+
+describe('studs', () => {
   const stud = { sku_code: 'm10x100-en8', diameter_mm: '10', length_mm: '100', thread_type: 'ISO metric RH, 1.5 mm pitch, fully threaded', material_grade: 'en8', hsn_sac: '731815', gst_rate_percent: '18' };
 
   it('computes the formula weight, honours a measured one, and recomputes when dimensions change', async () => {
@@ -125,8 +218,91 @@ describe('stud master', () => {
     const params = { id: created.data.id as string };
     expect(await call(one.PUT, { method: 'PUT', params, json: { ...stud, length_mm: '200' } })).toMatchObject({ data: { unit_weight_kg: '0.123305' } });
     expect(await call(one.PUT, { method: 'PUT', params, json: { ...stud, manual_unit_weight_kg: '0.0669' } })).toMatchObject({ data: { unit_weight_kg: '0.066900', unit_weight_is_manual: true } });
-    expect(await call(POST, { json: stud })).toMatchObject({ status: 409, error: { message: 'Another stud already has this SKU' } });
+    expect(await call(POST, { json: stud })).toMatchObject({ status: 409, error: { message: 'Another product already has this code' } });
     expect(await call(POST, { json: { ...stud, sku_code: 'X', default_rate_per_piece: '0.04375' } })).toMatchObject({ status: 400 }); // whole paise
+  });
+});
+
+describe('products', () => {
+  const nut = { name: 'Hex nut M12 GI', hsn_sac: '731816', gst_rate_percent: '18', default_rate_per_piece: '4.50' };
+  interface Listed { product_no: number; name: string | null; sku_code: string }
+  const add = async (json: Record<string, unknown>, as: Actor = ACTORS.staff) => call((await import('@/app/api/stud-items/route')).POST, { json, as });
+  const find = async (q: string, page = 1) =>
+    (await call((await import('@/app/api/stud-items/route')).GET, { search: `?${new URLSearchParams({ q, page: String(page) }).toString()}` })).data as unknown as { rows: Listed[]; hasMore: boolean };
+  const put = async (id: unknown, json: Record<string, unknown>) =>
+    call((await import('@/app/api/stud-items/[id]/route')).PUT, { method: 'PUT', params: { id: id as string }, json });
+
+  it('need a name, HSN and GST %, and get their ID from the database', async () => {
+    const first = await add({ ...nut, product_no: 900 });
+    const no = first.data.product_no as number;
+    expect(first).toMatchObject({
+      status: 201,
+      data: {
+        name: 'Hex nut M12 GI', sku_code: productCode(no), hsn_sac: '731816', gst_rate_percent: '18.00', default_rate_per_piece: '4.500000',
+        diameter_mm: null, length_mm: null, thread_type: null, material_grade: null, unit_weight_kg: null, unit_weight_is_manual: false, is_active: true,
+      },
+    });
+    expect(no).toBeLessThan(900);
+    expect((await add({ ...nut, name: 'Washer M12' })).data.product_no).toBe(no + 1);
+  });
+
+  it('are refused in words when something is missing', async () => {
+    expect(await add({ ...nut, gst_rate_percent: '' })).toMatchObject({ status: 400, error: { message: expect.stringContaining('Type the GST %') } });
+    expect(await add({ ...nut, hsn_sac: '' })).toMatchObject({ status: 400, error: { message: expect.stringContaining('HSN') } });
+    expect(await add({ ...nut, name: '' })).toMatchObject({ status: 400, error: { message: 'Give the product a name' } });
+    expect(await add({ ...nut, diameter_mm: '12' })).toMatchObject({ status: 400, error: { message: 'A stud needs its diameter, length, thread and grade' } });
+    expect(await add({ ...nut, sku_code: 'P0099' })).toMatchObject({ status: 400, error: { message: expect.stringContaining('given automatically') } });
+    await add({ ...nut, sku_code: 'nut-12' });
+    expect(await add({ ...nut, sku_code: 'NUT-12' })).toMatchObject({ status: 409, error: { message: 'Another product already has this code' } });
+  });
+
+  it('may be given a weight, a size and a code later, and lose them again', async () => {
+    const made = await add({ ...nut, name: 'Changing', manual_unit_weight_kg: '0.0125' });
+    expect(made.data).toMatchObject({ unit_weight_kg: '0.012500', unit_weight_is_manual: true });
+    const size = { diameter_mm: '10', length_mm: '100', thread_type: 'Full thread', material_grade: 'en8' };
+    expect((await put(made.data.id, { ...nut, ...size, name: 'Changing', sku_code: 'chg-1' })).data).toMatchObject({
+      product_no: made.data.product_no, sku_code: 'CHG-1', diameter_mm: '10.000', material_grade: 'EN8', unit_weight_kg: '0.061652', unit_weight_is_manual: false,
+    });
+    expect((await put(made.data.id, { ...nut, name: 'Changing' })).data).toMatchObject({
+      product_no: made.data.product_no, sku_code: productCode(made.data.product_no as number), diameter_mm: null, unit_weight_kg: null,
+    });
+  });
+
+  it('are found by ID first, then by part of the name, code or size', async () => {
+    const target = await add({ ...nut, name: 'Found by its ID' });
+    const no = target.data.product_no as number;
+    await add({ ...nut, name: `Spacer ${no} mm` });
+    for (const typed of [String(no), `p${no}`, productCode(no), ` ${productCode(no)} `]) {
+      const { rows } = await find(typed);
+      expect(rows[0], typed).toMatchObject({ product_no: no, name: 'Found by its ID' });
+      expect(rows.filter((row) => row.product_no === no), typed).toHaveLength(1);
+    }
+    expect((await find(String(no))).rows.map((row) => row.name)).toContain(`Spacer ${no} mm`);
+    expect((await find('its id')).rows.map((row) => row.name)).toEqual(['Found by its ID']);
+    expect((await find('m12x150-e')).rows.map((row) => row.sku_code)).toEqual(['M12X150-EN8']);
+    expect((await find('M12X150 EN8')).rows.map((row) => row.sku_code)).toEqual(['M12X150-EN8']); // its size
+    expect((await find('100%')).rows).toEqual([]);
+    expect((await find('_')).rows).toEqual([]);
+    expect((await find('a,b)')).rows).toEqual([]);
+  });
+
+  it('are listed by ID, and a search by ID still shows every other match once', async () => {
+    const no = (await add({ ...nut, name: 'Asked for' })).data.product_no as number;
+    await db.query(`insert into public.stud_items (name, hsn_sac, gst_rate_percent) select 'Lot ' || $1 || ' of ' || i, '7318', 18 from generate_series(1, 120) as i`, [no]);
+    const pages = [await find(String(no), 1), await find(String(no), 2), await find(String(no), 3)];
+    expect(pages.map((page) => [page.rows.length, page.hasMore])).toEqual([[50, true], [50, true], [21, false]]);
+    const seen = pages.flatMap((page) => page.rows.map((row) => row.product_no));
+    expect(seen[0]).toBe(no);
+    expect(new Set(seen).size).toBe(121);
+    expect(seen.slice(1)).toEqual([...seen.slice(1)].sort((a, b) => a - b));
+    const all = (await find('')).rows.map((row) => row.product_no);
+    expect(all).toEqual([...all].sort((a, b) => a - b));
+  });
+
+  it('are nobody else’s business', async () => {
+    const { GET } = await import('@/app/api/stud-items/route');
+    expect((await call(GET, { search: '?q=1', as: ACTORS.stranger })).data).toMatchObject({ rows: [] });
+    expect(await add(nut, ACTORS.stranger)).toMatchObject({ status: 403, error: { code: 'FORBIDDEN' } });
   });
 });
 
@@ -157,6 +333,14 @@ describe('billing', () => {
       items: [{ line_total: '1500.00', cgst_amount: '135.00' }],
       delivery: { vehicle_no: 'TN38AB1234', driver_phone: '9876500000', status: 'pending' },
     });
+  });
+
+  it('keeps the buyer’s order on the bill', async () => {
+    const issued = await sync({ ...draft(), po_no: '4500012/A', po_date: '2026-11-18' });
+    expect((await read(issued.data.invoice_id)).data).toMatchObject({ invoice: { po_no: '4500012/A', po_date: '2026-11-18' } });
+    const plain = await sync(draft());
+    expect((await read(plain.data.invoice_id)).data).toMatchObject({ invoice: { po_no: null, po_date: null } });
+    expect(await sync({ ...draft(), po_date: '2026-11-18' })).toMatchObject({ status: 400 });
   });
 
   it('never trusts the device’s total', async () => {
@@ -259,8 +443,18 @@ describe('billing', () => {
       expect(await call(company.PUT, { method: 'PUT', json: { ...profile, gstin: GSTIN.ka }, as: ACTORS.owner })).toMatchObject({ status: 400 });
       expect((await call(company.PUT, { method: 'PUT', json: profile })).status).toBe(403);
       expect(await call(company.PUT, { method: 'PUT', json: profile, as: ACTORS.owner })).toMatchObject({ status: 200 });
-      expect(await call(company.PUT, { method: 'PUT', json: { ...profile, legal_name: 'Demo 2' }, as: ACTORS.owner })).toMatchObject({ data: { legal_name: 'Demo 2' } });
-      expect(await sync(bill)).toMatchObject({ status: 201 });
+      expect(await call(company.PUT, { method: 'PUT', json: { ...profile, legal_name: 'Demo 2' }, as: ACTORS.owner })).toMatchObject({ data: { legal_name: 'Demo 2', tagline: null, factory_address: null, office_phone: null } });
+      const before = await sync(bill);
+      expect(before).toMatchObject({ status: 201 });
+      const head = { tagline: 'Mfrs : Studs', factory_address: '2 Works Road', office_phone: '0422 - 1234567' };
+      expect(await call(company.PUT, { method: 'PUT', json: { ...profile, ...head }, as: ACTORS.owner })).toMatchObject({ data: head });
+      for (const bad of [{ office_phone: 'call us' }, { office_phone: '123' }, { tagline: 'x'.repeat(161) }]) {
+        expect(await call(company.PUT, { method: 'PUT', json: { ...profile, ...bad }, as: ACTORS.owner }), JSON.stringify(bad)).toMatchObject({ status: 400 });
+      }
+      const after = await sync({ ...bill, client_temp_id: newTempId() });
+      expect((await read(after.data.invoice_id)).data).toMatchObject({ invoice: { supplier_snapshot: head } });
+      // Issued before the company had these lines: printed without.
+      expect((await read(before.data.invoice_id)).data).toMatchObject({ invoice: { supplier_snapshot: { tagline: null, factory_address: null, office_phone: null } } });
     } finally {
       db = full;
       await bare.close();

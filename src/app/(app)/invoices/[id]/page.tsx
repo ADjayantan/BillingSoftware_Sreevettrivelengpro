@@ -23,7 +23,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <section className="card overflow-x-auto">
           <p className="font-semibold">{invoice.customer_snapshot.name}</p>
-          <p className="mb-3 text-muted">{invoice.customer_snapshot.gstin ?? 'Unregistered'} · {stateLabel(invoice.place_of_supply)} · {formatDate(invoice.invoice_date)}, due {formatDate(invoice.due_date)}{delivery ? ` · ${delivery.dc_no}` : ''}</p>
+          <p className="mb-3 text-muted">{invoice.customer_snapshot.gstin ?? 'Unregistered'} · {stateLabel(invoice.place_of_supply)} · {formatDate(invoice.invoice_date)}, due {formatDate(invoice.due_date)}{delivery ? ` · ${delivery.dc_no}` : ''}{invoice.po_no ? ` · P.O. ${invoice.po_no}${invoice.po_date ? ` (${formatDate(invoice.po_date)})` : ''}` : ''}</p>
           <table className="grid-table">
             <thead><tr><th>Item</th><th className="num">Qty</th><th className="num">Rate</th><th className="num">Amount</th></tr></thead>
             <tbody>

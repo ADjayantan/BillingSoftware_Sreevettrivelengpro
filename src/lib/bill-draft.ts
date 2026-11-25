@@ -8,6 +8,9 @@ import { taxStateCode } from './india';
 import { paiseToDecimal, parseRupees, trimZeros } from './money';
 import type { BillDraft } from './schemas/invoices';
 
+/** A charge that is billed as a line of its own: never goods, on the challan or in the books. */
+export const CHARGE_LINE = { packing: 'Packing charges', delivery: 'Delivery charges', recovered: 'Delivery, recovered at cost' } as const;
+
 export class DraftError extends Error {
   override name = 'DraftError';
 }
@@ -64,12 +67,12 @@ export function composeBill(draft: ComposableDraft, customer: { state_code: stri
     pieces: null, weight_kg: null, rate: amount, gst_rate: gstRate,
   });
   const lines = [...draft.lines];
-  if (packingAsLine) lines.push(charge('Packing charges', draft.packing, chargesRate(draft)));
+  if (packingAsLine) lines.push(charge(CHARGE_LINE.packing, draft.packing, chargesRate(draft)));
   if (deliveryAsLine) {
     lines.push(
       untaxedDelivery
-        ? charge('Delivery, recovered at cost', draft.freight, '0')
-        : charge('Delivery charges', draft.freight, chargesRate(draft)),
+        ? charge(CHARGE_LINE.recovered, draft.freight, '0')
+        : charge(CHARGE_LINE.delivery, draft.freight, chargesRate(draft)),
     );
   }
 
@@ -102,6 +105,9 @@ export function buildSyncPayload(draft: BillDraft, bill: ComposedBill): Record<s
     invoice_date: draft.invoice_date,
     due_date: draft.due_date,
     notes: draft.notes,
+    // Left out, not sent empty: the books know a bill by its whole payload, and one that was sent
+    // before there were orders must still be the same.
+    ...(draft.po_no === null ? {} : { po_no: draft.po_no, po_date: draft.po_date }),
     subtotal: paiseToDecimal(amounts.subtotal_paise),
     packing_charge: paiseToDecimal(billed ? bill.input.packing_charge_paise : 0),
     delivery_charge: paiseToDecimal(billed ? bill.input.delivery_charge_paise : 0),

@@ -9,7 +9,7 @@ export function SignOut() {
   async function leave(): Promise<void> {
     const engine = await offlineEngine();
     const unsent = engine ? await engine.unsent().catch(() => 0) : 0;
-    if (unsent > 0 && !window.confirm(`${unsent} bill(s) on this PC are not sent yet. They stay here and go out at the next sign-in. Sign out?`)) return;
+    if (unsent > 0 && !window.confirm(`${unsent} bill(s) on this device are not sent yet. They stay here and go out at the next sign-in. Sign out?`)) return;
     await engine?.forgetMasters().catch(() => undefined);
     await forgetShell();
     await signOut();

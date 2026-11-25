@@ -35,6 +35,8 @@ function where(url: URL, params: unknown[]): string {
     const operator = raw.slice(0, dot);
     const value = raw.slice(dot + 1);
     if (operator === 'is' && value === 'null') clauses.push(`${ident(key)} is null`);
+    else if (raw === 'not.is.null') clauses.push(`${ident(key)} is not null`);
+    else if (operator === 'neq') clauses.push(`${ident(key)}::text <> $${params.push(value)}`);
     else if (operator === 'eq') clauses.push(`${ident(key)}::text = $${params.push(value)}`);
     else if (operator === 'gt') clauses.push(`${ident(key)} > $${params.push(value)}`);
     else if (operator === 'gte') clauses.push(`${ident(key)} >= $${params.push(value)}`);
@@ -71,13 +73,23 @@ export async function handle(db: PGlite, actor: Actor, method: string, href: str
   const params: unknown[] = [];
   let sql: string;
   let wrap = true;
+  let returns: 'rows' | 'value' | 'nothing' = 'rows';
   if (path.startsWith('rpc/')) {
-    const args = Object.entries(body as Record<string, unknown>);
-    const list = args.map(([name, value]) => {
-      const json = typeof value === 'object' && value !== null;
-      return `${ident(name)} := $${params.push(json ? JSON.stringify(value) : value)}${json ? '::jsonb' : ''}`;
-    });
-    sql = `select * from public.${ident(path.slice(4))}(${list.join(', ')})`;
+    const found = await db.query<{ many: boolean; type: string; names: string[] | null; types: string[] }>(
+      `select p.proretset as many, t.typname as type, p.proargnames as names,
+              array(select format_type(a.oid, null) from unnest(p.proargtypes::oid[]) with ordinality as a(oid, n) order by a.n) as types
+         from pg_proc p join pg_type t on t.oid = p.prorettype where p.pronamespace = 'public'::regnamespace and p.proname = $1`, [path.slice(4)],
+    );
+    const fn = found.rows[0];
+    const args = Object.entries((body ?? {}) as Record<string, unknown>);
+    const typeOf = (name: string): string | undefined => fn?.types[fn.names?.indexOf(name) ?? -1];
+    if (!fn || args.some(([name]) => !typeOf(name))) {
+      return new Response(JSON.stringify({ code: 'PGRST202', message: `no function ${path}`, details: null, hint: null }), { status: 404, headers: { 'content-type': 'application/json' } });
+    }
+    const list = args.map(([name, value]) => `${ident(name)} := $${params.push(typeOf(name) === 'jsonb' ? JSON.stringify(value) : value)}::${typeOf(name)}`);
+    const call = `public.${ident(path.slice(4))}(${list.join(', ')})`;
+    returns = fn.many ? 'rows' : fn.type === 'void' ? 'nothing' : 'value';
+    sql = returns === 'nothing' ? `select ${call}` : `select to_json(q)::text as body from ${call} as q`;
     wrap = false; // volatile functions: aggregate in JavaScript instead
   } else {
     const table = `public.${ident(path)}`;
@@ -105,10 +117,15 @@ export async function handle(db: PGlite, actor: Actor, method: string, href: str
     new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } });
   try {
     const rows = await asActor(db, actor, async (tx) => {
-      if (!wrap) return (await tx.query<Record<string, unknown>>(sql, params)).rows;
+      if (!wrap) {
+        const answered = (await tx.query<{ body?: string | null }>(sql, params)).rows;
+        return returns === 'nothing' ? [] : answered.map((row) => JSON.parse(row.body ?? 'null') as Record<string, unknown>);
+      }
       const text = (await tx.query<{ body: string }>(asJson(sql), params)).rows[0]!.body;
       return JSON.parse(text) as Record<string, unknown>[];
     });
+    if (returns === 'nothing') return new Response(null, { status: 204 });
+    if (returns === 'value') return reply(200, rows[0]);
     if (method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-range': `*/${String(rows[0]?.n)}` } });
     if (accept.includes('vnd.pgrst.object')) {
       if (rows.length !== 1) return reply(406, { code: 'PGRST116', message: 'Cannot coerce the result to a single JSON object', details: null, hint: null });

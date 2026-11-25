@@ -54,7 +54,7 @@ from auth.users u join private.app_users a on a.user_id = u.id
 where lower(u.email) = lower('owner@example.invalid');
 ```
 
-- [ ] In the app, sign in as this owner and complete **Company** (`/company`) with the real TN GSTIN and issuing details. Reopen it and compare the saved details with the letterhead. In rehearsal, try a new email with the public sign-up flow, then separately sign in as an admin-created user absent from `private.app_users`. Sign-up must fail, the second user must be denied business reads/writes, and a signed-out request must expose no customer data. Use ordinary browser sessions and the publishable key for these tests.
+- [ ] In the app, sign in as this owner and complete **Company** (`/company`) with the real TN GSTIN and issuing details: name, the line under it, office and factory address, telephone numbers, bank. Compare the sample bill at the end of that page with a printed bill of the old book, word by word and digit by digit (the 14th character of the GSTIN is the letter Z). In rehearsal, try a new email with the public sign-up flow, then separately sign in as an admin-created user absent from `private.app_users`. Sign-up must fail, the second user must be denied business reads/writes, and a signed-out request must expose no customer data. Use ordinary browser sessions and the publishable key for these tests.
 
 ## 3. Open both paper series before switching the counter
 

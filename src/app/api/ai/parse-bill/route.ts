@@ -34,6 +34,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       .from('stud_items')
       .select('id, sku_code, diameter_mm, length_mm, thread_type, material_grade')
       .eq('is_active', true)
+      .not('diameter_mm', 'is', null) // studs only: a product without a size is left out, never guessed
       .order('sku_code');
 
     const customers = must(customersRes) as ActiveCustomerRow[];

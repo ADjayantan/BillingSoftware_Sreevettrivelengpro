@@ -15,7 +15,6 @@ import {
   getVaultPeriodFolders,
   isDriveConfigured,
   MAX_DELIVERY_PROOF_BYTES,
-  renderPrintDocumentsToPdf,
   retryPendingDriveArchives,
   rowsToCsv,
   uploadDeliveryProofToDrive,
@@ -23,7 +22,9 @@ import {
   type ServiceAccountCredentials,
 } from '@/lib/drive-backup';
 import { getInvoice } from '@/lib/data';
+import { billSheets } from '@/lib/bill-sheets';
 import { buildDocuments } from '@/lib/print-documents';
+import { sheetsToPdf } from '@/lib/sheet-pdf';
 import { ACTORS, createTestDb, intraStatePayload, seedMasterData, syncInvoice, type MasterData } from './db/harness';
 import { pgliteFetch } from './support/postgrest';
 import { consentUrl, readEnv, upsertEnv } from '../scripts/drive-connect';
@@ -263,9 +264,7 @@ describe('Task B — Isolated Google Drive Vault & Weekly Disaster Backup', () =
   it('renders valid PDF 1.4 bytes and archives Supply + Job-Work bills without overwriting finalized PDFs', async () => {
     const supplyIssued = await syncInvoice(db, ACTORS.staff, intraStatePayload(md));
     const supplyDoc = await getInvoice(supabaseService, supplyIssued.invoice_id);
-    const pdfBytes = renderPrintDocumentsToPdf(
-      buildDocuments(supplyDoc, { documents: 'invoice', copies: 'original' }),
-    );
+    const pdfBytes = sheetsToPdf(billSheets(buildDocuments(supplyDoc, { documents: 'invoice', copies: 'original' })), supplyIssued.invoice_no);
     const pdfText = Buffer.from(pdfBytes).toString('utf8');
     expect(pdfText.startsWith('%PDF-1.4\n')).toBe(true);
     expect(pdfText.trimEnd().endsWith('%%EOF')).toBe(true);
@@ -635,6 +634,17 @@ describe('Weekly backup: nothing left out, and never "OK" when something is', ()
     await syncInvoice(db, ACTORS.staff, intraStatePayload(md));
     const { files } = await backUp(client({ maxRows: 7 }));
     for (const table of await everyTable()) expect([table, rowsIn(files, table).length]).toEqual([table, await rowsOf(table)]);
+  });
+
+  it('holds the ID and name of a product without a size, in both formats', async () => {
+    const { rows } = await db.query<{ id: string; no: number }>(
+      `insert into public.stud_items (name, hsn_sac, gst_rate_percent) values ('Backed-up "nut", M12', '731816', 18) returning id, product_no as no`,
+    );
+    const { files } = await backUp(client());
+    expect(rowsIn(files, 'stud_items').find((row) => row.id === rows[0]?.id)).toMatchObject({ product_no: rows[0]?.no, name: 'Backed-up "nut", M12', diameter_mm: null });
+    const csv = (files.get('csv/stud_items.csv') ?? '').split('\r\n');
+    expect(csv[0]).toMatch(/^\uFEFF?id,product_no,name,sku_code,/);
+    expect(csv.find((line) => line.startsWith(rows[0]?.id ?? '?'))).toContain(`,${rows[0]?.no},"Backed-up ""nut"", M12",`);
   });
 
   it('fails and uploads nothing when rows are missing from what it read', async () => {

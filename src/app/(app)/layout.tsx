@@ -6,8 +6,9 @@ import { SignOut } from '@/components/sign-out';
 const LINKS = [
   ['/billing', 'New bill'],
   ['/invoices', 'Bills'],
+  ['/books', 'Excel'],
   ['/customers', 'Customers'],
-  ['/stud-master', 'Studs'],
+  ['/stud-master', 'Products'],
   ['/job-work', 'Job-work lots'],
   ['/rates', 'Rates'],
   ['/company', 'Company'],

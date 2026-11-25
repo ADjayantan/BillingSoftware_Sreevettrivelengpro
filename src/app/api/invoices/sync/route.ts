@@ -1,31 +1,29 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { after } from 'next/server';
 import { z } from 'zod';
 import { ApiError, body, must, parse, parseRow, route, toApiError } from '@/lib/api/http';
 import { buildSyncPayload, composeBill } from '@/lib/bill-draft';
 import { findIssued } from '@/lib/data';
 import { triggerInvoiceArchiveAsync } from '@/lib/drive-backup';
 import { formatInr } from '@/lib/money';
+import { booksLater } from '@/lib/month-books';
 import { billDraft, clientTempId, syncResult } from '@/lib/schemas/invoices';
 
 const taxFacts = z.object({ state_code: z.string(), is_sez: z.boolean() });
 
-/** The bill is answered first. after() keeps the server alive until the upload is done. */
-function archiveLater(supabase: SupabaseClient, invoiceId: string): void {
-  const archive = () => triggerInvoiceArchiveAsync(supabase, invoiceId);
-  try {
-    after(archive);
-  } catch {
-    void archive(); // not inside a Next.js request
-  }
+/** More is the archive's own trouble; the month's book does not wait for it. */
+const ARCHIVE_MS = 30_000;
+
+/** The bill is answered first. One after the other, so that both find the same month's folder. */
+function filesLater(supabase: SupabaseClient, invoiceId: string): void {
+  booksLater({
+    first: () => Promise.race([triggerInvoiceArchiveAsync(supabase, invoiceId), new Promise((resolve) => setTimeout(resolve, ARCHIVE_MS).unref())]),
+  });
 }
 
 async function issue(supabase: SupabaseClient, raw: unknown): Promise<z.output<typeof syncResult> | undefined> {
   const draft = parse(billDraft, raw);
-  const customer = parseRow(
-    taxFacts,
-    must(await supabase.from('customers').select('state_code,is_sez').eq('id', draft.customer_id).single()),
-  );
+  const [customer] = parseRow(z.array(taxFacts), must(await supabase.from('customers').select('state_code,is_sez').eq('id', draft.customer_id).limit(1)));
+  if (!customer) throw new ApiError(404, 'NOT_FOUND', 'The customer of this bill is not in the books: pick the customer again');
   const bill = composeBill(draft, customer);
   const total = bill.detail.amounts.grand_total_paise;
   if (total !== draft.expected_total_paise) {
@@ -34,7 +32,7 @@ async function issue(supabase: SupabaseClient, raw: unknown): Promise<z.output<t
   const rows = must(await supabase.rpc('sync_invoice', { p_payload: buildSyncPayload(draft, bill) }));
   const issued = parseRow(z.array(syncResult).length(1), rows)[0];
   if (issued && !issued.replayed) {
-    archiveLater(supabase, issued.invoice_id);
+    filesLater(supabase, issued.invoice_id);
   }
   return issued;
 }

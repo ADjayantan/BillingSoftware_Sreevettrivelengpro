@@ -25,7 +25,8 @@ const CONSTRAINT_MESSAGES: Record<string, string> = {
   customers_gstin_key: 'Another customer already has this GSTIN',
   customers_gstin_matches_state: 'The state does not match the GSTIN',
   customers_gstin_needs_address: 'A GST-registered customer needs an address',
-  stud_items_sku_code_key: 'Another stud already has this SKU',
+  stud_items_sku_code_key: 'Another product already has this code',
+  stud_items_own_code: 'Codes like P0007 are product IDs, given automatically: use another code',
   stud_items_formula_weight: 'The weight does not match the dimensions',
   job_work_ledger_close_rule: 'To close this lot, its balance must be within 1% of the inward weight, or give a reason',
   invoices_gst_regime: 'The GST type does not match the customer’s state',
@@ -150,7 +151,7 @@ export interface ApiContext<P extends Params> {
 
 /** Every route: a same-site caller, a verified session, RLS, and one error shape. */
 export function route<P extends Params = Params>(handler: (context: ApiContext<P>) => Promise<unknown>) {
-  return async (request: Request, context: { params: Promise<P> }): Promise<NextResponse> => {
+  return async (request: Request, context: { params: Promise<P> }): Promise<Response> => {
     try {
       if (request.headers.get('sec-fetch-site') === 'cross-site') throw new ApiError(403, 'FORBIDDEN', 'Cross-site request refused');
       const supabase = await createClient();
@@ -158,6 +159,7 @@ export function route<P extends Params = Params>(handler: (context: ApiContext<P
       if (isAuthRetryableFetchError(authError)) throw unavailable();
       if (data === null) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in again');
       const result = await handler({ request, supabase, params: await context.params });
+      if (result instanceof Response) return result; // a file
       return NextResponse.json({ data: result }, { status: request.method === 'POST' ? 201 : 200, headers: NO_STORE });
     } catch (error) {
       return errorResponse(error);

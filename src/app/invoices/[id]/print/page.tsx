@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { z } from 'zod';
-import { PrintPacket } from '@/components/print-packet';
+import { Sheets } from '@/components/sheets';
+import { billSheets } from '@/lib/bill-sheets';
 import { invoiceMessages, loadInvoice } from '@/lib/load-invoice';
 import { buildDocuments } from '@/lib/print-documents';
 import { PrintButton } from './print-button';
@@ -13,10 +14,10 @@ const printQuery = z.object({
   copies: z.enum(['original', 'all']).catch('original'),
 });
 
-/** Exactly one page rule per print job, matching data-paper. */
+/** Exactly one page rule per print job, matching data-paper. The drawing has its own margins. */
 const PAGE_RULE = {
-  a4: '@page { size: A4 portrait; margin: 10mm; }',
-  a5: '@page { size: A5 portrait; margin: 7mm; }',
+  a4: '@page { size: A4 portrait; margin: 0; }',
+  a5: '@page { size: A5 portrait; margin: 0; }',
 } as const;
 
 /** Browsers name the saved PDF after the page title. */
@@ -47,7 +48,7 @@ export default async function PrintPage({ params, searchParams }: {
         <PrintButton />
         {invoiceMessages(doc).map((draft) => <a key={draft.label} className="btn" href={draft.href} target="_blank" rel="noopener noreferrer">{draft.label}</a>)}
       </nav>
-      <div className="preview"><PrintPacket documents={buildDocuments(doc, { documents: docs, copies })} paper={paper} /></div>
+      <main className="preview"><Sheets sheets={billSheets(buildDocuments(doc, { documents: docs, copies }))} paper={paper} /></main>
     </>
   );
 }

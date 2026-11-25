@@ -12,7 +12,7 @@ const AUTH_PATIENCE = 6000;
 const SHELL = '/billing';
 
 /** Machine-scheduled cron endpoints authenticate strictly via Authorization: Bearer CRON_SECRET in their handlers. */
-const CRON_PATHS = new Set(['/api/cron/weekly-backup', '/api/cron/metal-rates', '/api/cron/reminders']);
+const CRON_PATHS = new Set(['/api/cron/weekly-backup', '/api/cron/metal-rates', '/api/cron/reminders', '/api/cron/books']);
 
 const OUTAGE_PAGE = `<!doctype html><html lang="en-IN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>StudFlow · Cloud not answering</title>
 <style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-content:center;gap:16px;padding:16px;text-align:center;font:18px/1.5 system-ui,sans-serif}h1,p{margin:0}a{display:inline-block;padding:12px 20px;border:1px solid;border-radius:8px;font-weight:600;color:inherit;text-decoration:none}</style>

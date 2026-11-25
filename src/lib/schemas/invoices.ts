@@ -66,6 +66,9 @@ export const billDraft = z
     customer_id: c.id,
     invoice_date: c.isoDate,
     due_date: c.isoDate,
+    /** The buyer's order, as on the buyer's paper. */
+    po_no: c.optionalText(40),
+    po_date: c.isoDate.nullish().transform((value) => value ?? null),
     notes: c.optionalText(1000),
     lines: z.array(draftLine).min(1, 'Add at least one line').max(497), // leaves room for charge lines
     packing: c.rupees.default('0'),
@@ -81,6 +84,7 @@ export const billDraft = z
     expected_total_paise: z.number().int().nonnegative(),
   })
   .refine((draft) => draft.due_date >= draft.invoice_date, { path: ['due_date'], message: 'Due date is before the invoice date' })
+  .refine((draft) => draft.po_no !== null || draft.po_date === null, { path: ['po_no'], message: 'Type the P.O. number too' })
   .refine((draft) => draft.returns.length === 0 || draft.bill_type === 'job_work', {
     path: ['returns'],
     message: 'Only a job-work bill returns customer material',
@@ -145,12 +149,17 @@ const party = z.object({
   phone: z.string().nullable(),
   is_sez: z.boolean(),
 });
+/** Not there on a bill issued before the company had it. */
+const added = z.string().nullish().transform((value) => value ?? null);
 const supplier = z.object({
   legal_name: z.string(),
+  tagline: added,
   gstin: z.string(),
   address: z.string(),
+  factory_address: added,
   state_code: z.string(),
   phone: z.string().nullable(),
+  office_phone: added,
   email: z.string().nullable(),
   bank_name: z.string().nullable(),
   bank_branch: z.string().nullable(),
@@ -184,6 +193,8 @@ export const invoiceRow = z.object({
   grand_total: z.string(),
   amount_paid: z.string(),
   payment_status: z.enum(['unpaid', 'partial', 'paid']),
+  po_no: z.string().nullable(),
+  po_date: z.string().nullable(),
   notes: z.string().nullable(),
   cancelled_at: z.string().nullable(),
   cancellation_reason: z.string().nullable(),

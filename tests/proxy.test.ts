@@ -142,8 +142,15 @@ describe('proxy', () => {
     for (const path of ['/billing', '/api/customers', '/sw.js/../customers', '/offline.html/x', '/api/sw.js/x']) expect(matcher.test(path)).toBe(true);
   });
 
-  it('skips the sign-in page for the signed-in', async () => {
-    expect((await visit('/login', cookieFor(session(3000, 'r1')))).headers.get('location')).toBe('http://localhost:3000/billing');
+  it('starts the signed-in at Home, whichever door they come through', async () => {
+    for (const door of ['/', '/login']) expect((await visit(door, cookieFor(session(3000, 'r1')))).headers.get('location'), door).toBe('http://localhost:3000/home');
+  });
+
+  it('Home has data in it, so an outage closes it like every page but billing', async () => {
+    cloud = 'down';
+    const page = await visit('/home', cookieFor(session(3000, 'r1')));
+    expect(page.status).toBe(503);
+    expect(await page.text()).toContain('href="/billing"');
   });
 });
 
@@ -152,7 +159,7 @@ describe('sign-in return path', () => {
     const { safeNext } = await import('@/lib/safe-next');
     expect(safeNext('/invoices?page=2')).toBe('/invoices?page=2');
     for (const bad of ['', '//evil.example', '/\\evil.example', 'https://evil.example', 'javascript:alert(1)', '/\t/evil.example', '/\n/evil.example']) {
-      expect(safeNext(bad)).toBe('/billing');
+      expect(safeNext(bad)).toBe('/home');
     }
   });
 });

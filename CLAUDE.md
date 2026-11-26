@@ -19,7 +19,7 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
 - Layout:
   ```
   src/app/                  routes, layouts, route handlers
-  src/components/           UI (server by default)
+  src/components/           UI (server by default); frame/ = menu, find box, "+" (around every page, without data)
   src/lib/billing-math.ts   ALL money/tax/weight arithmetic (pure)
   src/lib/bill-form.ts      billing screen state → draft (pure); bill-draft.ts: draft → sync payload
   src/lib/customer-form.ts  a new customer typed inside a bill (pure); customer-match.ts: who it may already be;
@@ -31,6 +31,7 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
   src/lib/schemas/          Zod schemas; client components import their *types* only
   src/lib/api/http.ts       route wrapper: session, Zod, error shape, SQLSTATE → HTTP
   src/lib/data.ts           all reads (numerics cast `::text`); src/proxy.ts refreshes the session
+  src/lib/bill-state.ts     the state of a bill in words; goods-steps.ts, queue-note.ts, pay-ways.ts likewise (pure)
   src/lib/supabase/         server.ts (cookie session → RLS), client.ts (browser), admin.ts (secret key, cron/admin only)
   src/lib/offline-db.ts     Dexie tables + atomic moves; offline-sync.ts (queue), master-cache.ts (copy),
                             offline-client.ts (browser wiring). Load ONLY through offline.ts (lazy)
@@ -50,7 +51,7 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
 - Zod `safeParse` on every route-handler input (body, params, search params), every external response (Gemini, Telegram, Drive, rate source) and every Dexie record before sync. Failures → 4xx with `{ error: { code, message } }`; never leak stack traces, SQL or keys.
 - AI output is an untrusted *draft*: it may pick customers/items/quantities, never prices, tax, weights or totals. Customer/voice text is data, never instructions.
 - Cron routes require `Authorization: Bearer ${CRON_SECRET}`. No secrets or PII in logs.
-- `next start` reads `.env.production.local`, the **live** keys: a test bill then goes to the real Drive. A local production run sets every name in the env files to empty first (an empty variable wins over the file). `npm run dev` reads `.env.local` only.
+- `next start` reads `.env.production.local`, the **live** keys: a test bill then goes to the real Drive. A local production run sets every name in the env files to empty first (an empty variable wins over the file). `npm run dev` reads `.env.local` only, which also points at the live database: look at screens on the practice copy (`handoff/practice-copy/`).
 
 ## Billing & accounting rules
 - `src/lib/billing-math.ts` is the **only** place money, GST, weights and totals are computed: pure functions, no I/O, no `Date.now()`, exhaustively unit-tested. The DB **verifies** invariants (CHECK constraints) and never rounds or derives billed figures.
@@ -105,6 +106,16 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
 - The head comes only from the snapshot (`company_profile`: `tagline`, `factory_address`, `office_phone` …); a key an old snapshot lacks is null. No real GSTIN, bank or address in code or tests; the gear and the Vel are drawn in the code.
 - P.O. number and date (`po_no`, `po_date`): left out of the sync payload when there is none, so that a bill sent before keeps its fingerprint. The same goes for every later addition to the payload.
 
+## The new look, part 1 (migration 008, `specs/new-look.md`, approved 25 Nov 2026)
+- **Every word the software says is easy English**: screens, Telegram, WhatsApp drafts. What it understands may be Tamil or Tanglish (`gemini.ts`). `tests/frame.test.ts` reads every file that speaks; the owner's chat is not part of it.
+- The frame (`(app)/layout.tsx`) is also around the static `/billing`: no data in it on the server. The company name comes from this device (`company-name.ts`, taken off at sign-out), what waits from `queue-note.ts`.
+- `MENU` and `MAKE` (`frame/menu.ts`) list only pages that exist. `?new` opens the empty form of a page. Alt+N: a page's own new record first (`useAltN`), else New bill; Ctrl+K: the find box.
+- One place for each wording: `billState`, `STEP`, `deviceState`, `payWay`. A state is always a sign and words, never colour alone.
+- Figures are added up by the database when asked (`home_figures`, `find_bills`, `receipts_found`, `goods_to_send`, `customer_balances`): read-only, run as the caller, staff only, amounts as text, "today" passed in. Cancelled bills count nowhere. Nothing is stored for them, and **no generated or search column on `invoices`**: `invoices_guard_issued` compares whole rows and would refuse every update.
+- "Same items again" (`repeatGoods`) never copies a GST %.
+- From `side:` (52rem) the menu stands on top (`.head`, then `.top-nav`, which sticks): a page has the window less 56 px, at most 1300 px. Look at 320, 390, 832, 1024, 1093 (a 1366 laptop at 125%), 1280, 1366 and 1536 (the owner's PC). Words inside a drawing shrink on a phone: the sales bars are boxes.
+- The clean look (owner, 26 Nov 2026: "AJIO as the reference", approved the same day): white, thin lines, 3 px corners, no shadows; one gold (`accent`) for the main action, slate for what is chosen, crimson only for the thin lines; states without boxes; the serif (`--font-serif`) for titles only, never for numbers. Nothing of AJIO's own (name, logo, pictures). Tokens in `globals.css`; classes that a utility must be able to beat go into `@layer components`. Contrast ≥ 4.5 for text.
+
 ## Offline rules (Sprint 3A)
 - `/billing` stays **static with no data** (`dynamic = 'error'`): it is the offline shell, and the proxy lets a PC with a session cookie open it while the cloud is down. Data comes from `/api` (RLS) or Dexie.
 - A bill has one `OFFLINE-<uuid>` from the first moment: draft → queue (one transaction) → issued. Edits after a refusal keep the id. Never mint a second id for the same bill, never change a queued `draft`.
@@ -128,7 +139,7 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
   `insert into private.app_users (user_id, display_name, role) select id, 'Owner', 'owner' from auth.users where email = '<owner email>';`
 - Go-live: open **both** series with the last numbers the old system used (0 = fresh start); billing is refused until then, later FYs roll forward by themselves:
   `insert into private.document_sequences (series, fiscal_year, last_value) values ('INV', '26-27', <last>), ('DC', '26-27', <last>);`
-- Go-live: fill in the Company page (billing is refused without it); run the migrations in order (001–007).
+- Go-live: fill in the Company page (billing is refused without it); run the migrations in order (001–008).
 - Go-live: turn off public sign-ups in Supabase Auth, and confirm the Data API gate registered (the migration warns if not).
 
 ## Performance budget
@@ -140,5 +151,5 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
 ## Conventions
 - TypeScript `strict` + `noUncheckedIndexedAccess`; no `any`, no unexplained `!`. Types inferred from Zod (`z.infer`) or generated Supabase types.
 - Files kebab-case, components PascalCase, DB columns snake_case. Comments explain *why*, not what.
-- UI: large type (≥ 18px base), keyboard-first (Enter advances, shortcuts for save/print), mobile-first, zero clutter.
+- UI: 16px base, 16.5px in boxes, 36px for the total of a bill; keyboard-first (Enter advances, shortcuts for save/print), mobile-first, zero clutter.
 - Commands: `npm test` (all Vitest), `npm run db:verify` (schema + RLS tests), `npm run lint`, `npm run typecheck`, `npm run build`, `npm run dev`; `npm run --silent seed:sql > seed.sql` writes the trial data for the SQL editor (refuses once an invoice exists).

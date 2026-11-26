@@ -1,8 +1,6 @@
 import { query, route } from '@/lib/api/http';
-import { listInvoices } from '@/lib/data';
-import { listQuery } from '@/lib/schemas/common';
+import { findBills } from '@/lib/data';
+import { istDate } from '@/lib/india';
+import { billsQuery } from '@/lib/schemas/home';
 
-export const GET = route(async ({ request, supabase }) => {
-  const { q, page } = query(request, listQuery);
-  return listInvoices(supabase, q, page);
-});
+export const GET = route(async ({ request, supabase }) => findBills(supabase, query(request, billsQuery), istDate(new Date())));

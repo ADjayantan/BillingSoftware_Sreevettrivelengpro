@@ -36,9 +36,18 @@ export function formatPaise(paise: number): string {
 
 export const formatInr = (paise: number): string => `${paise < 0 ? '-' : ''}₹${formatPaise(Math.abs(paise))}`;
 
+/** For cards and lists: whole rupees without '.00', anything else exact. */
+export const formatRupees = (paise: number): string => formatInr(paise).replace(/\.00$/, '');
+
 /** '12.500000' -> '12.5', '100.00' -> '100' */
 export const trimZeros = (decimal: string): string =>
   decimal.includes('.') ? decimal.replace(/0+$/, '').replace(/\.$/, '') : decimal;
+
+/** A rate in a list: '116.5000' -> '116.50', '3.1' -> '3.10', '0.125' stays. */
+export function rateText(decimal: string): string {
+  const [whole = '0', part = ''] = trimZeros(decimal).split('.');
+  return `${whole}.${part.padEnd(2, '0')}`;
+}
 
 const ONES = [
   '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve',

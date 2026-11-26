@@ -199,6 +199,33 @@ export function changeUnit(line: FormLine, unit: 'pcs' | 'kg', type: BillType): 
   return { ...line, unit, rate: next === '' && line.rate !== productRate(line.stud, line.unit) ? line.rate : next };
 }
 
+/** A line of an earlier bill. */
+export interface EarlierGoods {
+  stud: StudItem | null;
+  description: string;
+  hsn_sac: string;
+  billing_unit: 'pcs' | 'kg';
+  quantity: string;
+  rate: string;
+}
+
+/**
+ * The goods of an earlier bill, below what is typed already. The words, quantity and rate are the
+ * earlier ones. GST is never copied from a bill: a product brings its own of today, with its HSN,
+ * and without a product a person types the GST % again (the earlier HSN stays).
+ */
+export function repeatGoods(form: BillForm, goods: readonly EarlierGoods[]): BillForm {
+  const kept = form.lines.filter((line) => !isBlank(line));
+  const next = Math.max(0, ...form.lines.map((line) => line.key)) + 1;
+  const added = goods.map((item, i): FormLine => {
+    const line = blankLine(next + i, form.type);
+    const fills = item.stud !== null && fillsLine(item.stud, form.type);
+    const picked = item.stud ? changeUnit(pickStud(line, item.stud, form.type), item.billing_unit, form.type) : { ...line, unit: item.billing_unit };
+    return { ...picked, text: item.description, quantity: item.quantity, rate: item.rate, ...(fills ? {} : { hsn: item.hsn_sac }) };
+  });
+  return { ...form, lines: withTrailingBlank([...kept, ...added], form.type) };
+}
+
 const weightSpec = (stud: StudItem): WeightSpec => ({
   diameter_mm: stud.diameter_mm,
   length_mm: stud.length_mm,

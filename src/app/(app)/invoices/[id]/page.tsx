@@ -1,61 +1,72 @@
 import Link from 'next/link';
-import { formatDate, stateLabel } from '@/lib/india';
-import { invoiceMessages, loadInvoice } from '@/lib/load-invoice';
+import { Icon } from '@/components/icon';
+import { Trail } from '@/components/page-head';
+import { Pill } from '@/components/pill';
+import { Sheets } from '@/components/sheets';
+import { billSheets } from '@/lib/bill-sheets';
+import { billState } from '@/lib/bill-state';
 import { outstandingPaise } from '@/lib/billing-math';
-import { decimalToPaise, formatInr, formatPaise, trimZeros } from '@/lib/money';
-import { InvoiceActions } from './actions-panel';
+import { formatDate, istDate, stateLabel } from '@/lib/india';
+import { invoiceMessages, loadInvoice } from '@/lib/load-invoice';
+import { decimalToPaise, formatInr } from '@/lib/money';
+import { buildDocuments } from '@/lib/print-documents';
+import { CancelBill, Dispatch, Happened, RecordMoney } from './actions-panel';
 
 export default async function InvoicePage({ params }: { params: Promise<{ id: string }> }) {
   const doc = await loadInvoice(params);
-  const { invoice, items, delivery, payments, returns } = doc;
-  const balance = outstandingPaise(decimalToPaise(invoice.grand_total), decimalToPaise(invoice.amount_paid));
+  const { invoice, delivery, payments, returns } = doc;
+  const total = decimalToPaise(invoice.grand_total);
+  const received = decimalToPaise(invoice.amount_paid);
+  const cancelled = invoice.cancelled_at !== null;
+  const settled = invoice.payment_status === 'paid';
+  const balance = cancelled || settled ? 0 : outstandingPaise(total, received);
+  const state = billState({ due_date: invoice.due_date, payment_status: invoice.payment_status, cancelled }, istDate(new Date()));
+  const share = total === 0 ? 1 : Math.min(1, received / total);
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-bold">{invoice.invoice_no}</h1>
-        {invoice.cancelled_at ? <span className="rounded border border-warn px-2 font-semibold text-warn">Cancelled · {invoice.cancellation_reason}</span> : null}
-        <div className="ml-auto flex flex-wrap gap-2">
-          <Link className="btn btn-primary" href={`/invoices/${invoice.id}/print?paper=a4`}>Print A4</Link>
-          <Link className="btn" href={`/invoices/${invoice.id}/print?paper=a5`}>Print A5</Link>
-          {invoiceMessages(doc).map((draft) => <a key={draft.label} className="btn" href={draft.href} target="_blank" rel="noopener noreferrer">{draft.label}</a>)}
+      <Trail steps={[['/home', 'Home'], ['/invoices', 'Bills']]} here={invoice.invoice_no} />
+      <div className="grid items-start gap-x-12 gap-y-6 lg:grid-cols-[minmax(0,1fr)_330px] xl:grid-cols-[minmax(0,1fr)_400px]">
+        <div className="min-w-0 border border-line bg-white max-lg:order-last [&_svg]:block [&_svg]:h-auto [&_svg]:w-full">
+          <Sheets sheets={billSheets(buildDocuments(doc, { documents: 'invoice', copies: 'original' }))} paper="a4" />
+        </div>
+        <div className="grid min-w-0 gap-7">
+          <div>
+            <p className="text-[15px] font-semibold tracking-[0.05em] text-accent uppercase wrap-anywhere">{invoice.customer_snapshot.name}</p>
+            <h1 className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[27px] leading-tight font-normal wrap-anywhere">{invoice.invoice_no}<Pill kind={state.kind}>{state.text}</Pill></h1>
+            <p className="mt-1 text-[14.5px] text-muted wrap-anywhere">{[formatDate(invoice.invoice_date), invoice.po_no ? `P.O. ${invoice.po_no}` : null, stateLabel(invoice.place_of_supply)].filter(Boolean).join(' · ')}</p>
+          </div>
+          <section className="border-y border-line py-4.5" aria-label="Money">
+            <p className="small-head">{cancelled ? 'Cancelled bill of' : 'To collect'}</p>
+            <p className="mt-1 text-[34px] leading-tight font-semibold wrap-anywhere" style={{ fontFamily: 'var(--font-display)' }}>{formatInr(cancelled ? total : balance)}</p>
+            {cancelled ? null : (
+              <>
+                <div className="mt-2.5 mb-2 h-1.5 overflow-hidden rounded-full bg-off-bg" role="img" aria-label={`${formatInr(received)} of ${formatInr(total)} received`}><span className="block h-full rounded-full bg-paid" style={{ width: `${(settled ? 1 : share) * 100}%` }} /></div>
+                <p className="text-[14.5px] text-ink-2">{settled && received < total ? `Settled with ${formatInr(received)} of ${formatInr(total)}` : `${formatInr(received)} received of ${formatInr(total)}`}</p>
+                {settled ? null : <p className="text-[14.5px] text-muted">Due {formatDate(invoice.due_date)}</p>}
+              </>
+            )}
+          </section>
+          <div className="grid grid-cols-2 gap-2.5">
+            {balance > 0 ? <RecordMoney key={invoice.amount_paid} invoiceId={invoice.id} invoiceNo={invoice.invoice_no} balancePaise={balance} /> : null}
+            <span className="flex max-[26rem]:col-span-2">
+              <Link className="btn flex-1 rounded-r-none border-r-0 px-3 whitespace-nowrap" href={`/invoices/${invoice.id}/print?paper=a4`}><Icon name="print" />Print A4</Link>
+              <Link className="btn rounded-l-none px-3" href={`/invoices/${invoice.id}/print?paper=a5`}>A5</Link>
+            </span>
+            {invoiceMessages(doc).map((draft) => <a key={draft.label} className="btn max-[26rem]:col-span-2" href={draft.href} target="_blank" rel="noopener noreferrer"><Icon name="chat" />{draft.label}</a>)}
+          </div>
+          {delivery ? <Dispatch key={`${delivery.status}-${delivery.vehicle_no ?? ''}`} delivery={delivery} cancelled={cancelled} /> : null}
+          {returns.length > 0 ? (
+            <section aria-label="Customer material">
+              <div className="plain-head"><h2 className="card-title">Customer material sent back</h2></div>
+              <ul className="mt-3 grid gap-1.5 text-[14.5px] text-ink-2">
+                {returns.map((lot) => <li key={lot.line_no}>Party DC {lot.party_dc_no}: {lot.returned_weight_kg} kg sent, {lot.scrap_weight_kg} kg scrap, {lot.balance_after_kg} kg still here</li>)}
+              </ul>
+            </section>
+          ) : null}
+          <Happened payments={payments} invoiceDate={invoice.invoice_date} cancelled={cancelled ? (invoice.cancellation_reason ?? '') : null} />
+          {cancelled ? null : <CancelBill invoiceId={invoice.id} />}
         </div>
       </div>
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <section className="card overflow-x-auto">
-          <p className="font-semibold">{invoice.customer_snapshot.name}</p>
-          <p className="mb-3 text-muted">{invoice.customer_snapshot.gstin ?? 'Unregistered'} · {stateLabel(invoice.place_of_supply)} · {formatDate(invoice.invoice_date)}, due {formatDate(invoice.due_date)}{delivery ? ` · ${delivery.dc_no}` : ''}{invoice.po_no ? ` · P.O. ${invoice.po_no}${invoice.po_date ? ` (${formatDate(invoice.po_date)})` : ''}` : ''}</p>
-          <table className="grid-table">
-            <thead><tr><th>Item</th><th className="num">Qty</th><th className="num">Rate</th><th className="num">Amount</th></tr></thead>
-            <tbody>
-              {items.map((item) => (
-                <tr key={item.line_no}>
-                  <td>{item.description}<span className="block text-sm text-muted">{item.hsn_sac} · {trimZeros(item.tax_rate_percent)}%</span></td>
-                  <td className="num">{item.billing_unit === 'pcs' ? `${item.qty_pieces ?? 0} pcs` : `${trimZeros(item.total_weight_kg ?? '0')} kg`}</td>
-                  <td className="num">{trimZeros(item.unit_rate)}</td>
-                  <td className="num">{formatPaise(decimalToPaise(item.line_total))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {returns.length > 0 ? (
-            <ul className="mt-3 text-muted">
-              {returns.map((lot) => <li key={lot.line_no}>Party DC {lot.party_dc_no}: returned {lot.returned_weight_kg} kg, scrap {lot.scrap_weight_kg} kg, balance {lot.balance_after_kg} kg</li>)}
-            </ul>
-          ) : null}
-        </section>
-        <section className="card grid content-start gap-1">
-          {([['Subtotal', invoice.subtotal], ['Packing', invoice.packing_charge], ['Delivery', invoice.delivery_charge], ['CGST', invoice.cgst], ['SGST', invoice.sgst], ['IGST', invoice.igst], ['Round-off', invoice.round_off]] as const)
-            .filter(([label, value]) => label === 'Subtotal' || decimalToPaise(value) !== 0)
-            .map(([label, value]) => <div key={label} className="flex justify-between"><span>{label}</span><span className="tabular-nums">{formatPaise(decimalToPaise(value))}</span></div>)}
-          <div className="flex justify-between border-t border-line pt-2 text-xl font-bold"><span>Total</span><span className="tabular-nums">{formatInr(decimalToPaise(invoice.grand_total))}</span></div>
-          <div className="flex justify-between"><span>Received</span><span className="tabular-nums">{formatInr(decimalToPaise(invoice.amount_paid))}</span></div>
-          {invoice.cancelled_at || invoice.payment_status === 'paid' ? <p className="font-semibold text-accent">{invoice.cancelled_at ? '' : 'Settled'}</p> : <div className="flex justify-between font-semibold"><span>Balance</span><span className="tabular-nums">{formatInr(balance)}</span></div>}
-        </section>
-      </div>
-      <InvoiceActions
-        key={`${invoice.amount_paid}-${invoice.payment_status}-${delivery?.status ?? ''}`}
-        invoiceId={invoice.id} cancelled={invoice.cancelled_at !== null} settled={invoice.payment_status === 'paid'} delivery={delivery} payments={payments}
-      />
     </>
   );
 }

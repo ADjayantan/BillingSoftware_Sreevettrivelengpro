@@ -76,10 +76,10 @@ export function formatMetalRateTelegramAlert(
   const allNegative = deltas.every((d) => d < 0);
 
   const verb = allPositive
-    ? 'Rod rate yeriduchu'
+    ? 'Rod rate went up'
     : allNegative
-      ? 'Rod rate kurainjirukku'
-      : 'Rod rate maariyirukku';
+      ? 'Rod rate went down'
+      : 'Rod rate changed';
 
   const header = `${dayMon} | ${verb} (₹/kg)`;
 
@@ -97,7 +97,7 @@ export function formatMetalRateTelegramAlert(
     bodyLines.push(pair.join(' · '));
   }
 
-  return [header, ...bodyLines, 'Pudhu quotation-ku indha rate-a paathukkonga.'].join('\n');
+  return [header, ...bodyLines, 'Check this rate before you quote.'].join('\n');
 }
 
 export function buildSourceKey(input: {
@@ -115,7 +115,7 @@ export function buildSourceKey(input: {
  * 2. Deduplicates replayed `(source_channel, source_conversation_id, source_message_id)` messages
  * 3. Normalizes `INR/metric_tonne`, `delta_from_yesterday`, and `unchanged` against DB history
  * 4. Inserts into `public.metal_rates` (letting Postgres compute `previous_rate_per_kg` & `change_delta`)
- * 5. Evaluates active `public.alert_rules` and sends the Tanglish Telegram spike alert when triggered.
+ * 5. Evaluates active `public.alert_rules` and sends the Telegram alert when triggered.
  */
 export async function processDealerMetalRateMessage(options: {
   input: DealerMessageInput;

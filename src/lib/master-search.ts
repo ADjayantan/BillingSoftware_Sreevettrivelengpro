@@ -41,7 +41,7 @@ async function cloudOrCache<T>(path: string, cached: (engine: OfflineEngine) => 
 }
 
 export const customerDetail = (customer: Customer): string =>
-  `${customer.gstin ?? 'Unregistered'} · ${stateLabel(customer.state_code)}${customer.is_sez ? ' · SEZ' : ''}`;
+  `${customer.gstin ?? 'No GSTIN'} · ${stateLabel(customer.state_code)}${customer.is_sez ? ' · SEZ' : ''}`;
 
 export async function searchCustomers(q: string): Promise<Option<Customer>[]> {
   const [rows, here] = await Promise.all([

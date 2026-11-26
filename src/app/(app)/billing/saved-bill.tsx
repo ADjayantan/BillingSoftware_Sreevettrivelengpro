@@ -93,10 +93,10 @@ export function SavedBill({ tempId, engine, issued, total, onNew, onRejected, on
     <ol aria-label="Where this bill is" className="mx-auto grid gap-1 text-left">
       {kept ? <Step done>Saved on this device</Step> : null}
       <Step done={number !== null}>
-        {number ? `Invoice issued: ${number.invoice_no}` : review ? 'Invoice: waits for the customer' : waiting ? 'Invoice: not issued yet' : 'Invoice: being issued'}
+        {number ? `Bill number: ${number.invoice_no}` : review ? 'Bill number: waits for the customer' : waiting ? 'Bill number: not yet' : 'Bill number: on its way'}
       </Step>
       <Step done={book === 'updated'}>
-        {book === 'updated' ? 'Excel updated' : !number ? 'Excel: after the invoice' : book === 'off' ? 'Excel: Google Drive is not connected' : book === 'slow' ? 'Excel: updated by itself, a little later' : 'Excel: being updated'}
+        {book === 'updated' ? 'Excel updated' : !number ? 'Excel: after the bill number' : book === 'off' ? 'Excel: Google Drive is not connected' : book === 'slow' ? 'Excel: updated by itself, a little later' : 'Excel: being updated'}
       </Step>
     </ol>
   );
@@ -106,20 +106,20 @@ export function SavedBill({ tempId, engine, issued, total, onNew, onRejected, on
       {conflict ? (
         <>
           <p className="text-lg font-semibold text-warn">Already issued: do not bill it again</p>
-          <p className="text-4xl font-bold">{conflict.invoice_no}</p>
+          <p className="text-4xl font-bold wrap-anywhere">{conflict.invoice_no}</p>
           <Notice tone="warn">
-            This bill reached the books before the connection dropped. {conflict.invoice_no} stands{conflict.grand_total ? ` at ${formatInr(decimalToPaise(conflict.grand_total))}` : ''}
+            This bill was already saved before the internet stopped. {conflict.invoice_no} stands{conflict.grand_total ? ` at ${formatInr(decimalToPaise(conflict.grand_total))}` : ''}
             {total === null ? '' : `; this device shows ${formatInr(total)}`}. If it is wrong, open it and cancel it.
           </Notice>
           <div className="flex flex-wrap justify-center gap-3">
             <Link className="btn btn-primary" href={`/invoices/${conflict.invoice_id}`}>Open {conflict.invoice_no}</Link>
-            <button className="btn" type="button" onClick={onNew}>New bill (Alt+N)</button>
+            <button className="btn" type="button" onClick={onNew}>New bill<kbd className="kbd">Alt N</kbd></button>
           </div>
         </>
       ) : number ? (
         <>
           <p className="text-lg text-muted">Bill saved</p>
-          <p className="text-4xl font-bold">{number.invoice_no}</p>
+          <p className="text-4xl font-bold wrap-anywhere">{number.invoice_no}</p>
           <p className="text-xl">Delivery challan {number.dc_no}</p>
           {item?.note ? <p className="font-semibold">{item.note}</p> : null}
           {steps}
@@ -127,7 +127,7 @@ export function SavedBill({ tempId, engine, issued, total, onNew, onRejected, on
             <Link ref={printLink} className="btn btn-primary" href={`/invoices/${number.invoice_id}/print?paper=a4`}>Print A4</Link>
             <Link className="btn" href={`/invoices/${number.invoice_id}/print?paper=a5`}>Print A5</Link>
             <Link className="btn" href={`/invoices/${number.invoice_id}`}>Open bill</Link>
-            <button className="btn" type="button" onClick={onNew}>New bill (Alt+N)</button>
+            <button className="btn" type="button" onClick={onNew}>New bill<kbd className="kbd">Alt N</kbd></button>
           </div>
         </>
       ) : review ? (
@@ -142,7 +142,7 @@ export function SavedBill({ tempId, engine, issued, total, onNew, onRejected, on
           />
           {steps}
           <div className="flex flex-wrap justify-center gap-3">
-            <button className="btn" type="button" onClick={onNew}>New bill (Alt+N)</button>
+            <button className="btn" type="button" onClick={onNew}>New bill<kbd className="kbd">Alt N</kbd></button>
           </div>
         </>
       ) : (
@@ -150,11 +150,11 @@ export function SavedBill({ tempId, engine, issued, total, onNew, onRejected, on
           <p className="text-lg text-muted">{waiting ? 'Saved on this device' : 'Saving…'}</p>
           <p className="text-4xl font-bold tabular-nums">{total === null ? '' : formatInr(total)}</p>
           <p className="text-xl">
-            {waiting ? (connection === 'signed_out' ? 'Sign in again to get its invoice number.' : 'It gets its invoice number by itself when the internet is back.') : 'Getting the invoice number'}
+            {waiting ? (connection === 'signed_out' ? 'Sign in again to get its bill number.' : 'It gets its number by itself when the internet is back.') : 'Getting the bill number'}
           </p>
           {item ? steps : null}
           <div className="flex flex-wrap justify-center gap-3">
-            <button ref={newButton} className="btn btn-primary" type="button" onClick={onNew}>New bill (Alt+N)</button>
+            <button ref={newButton} className="btn btn-primary" type="button" onClick={onNew}>New bill<kbd className="kbd">Alt N</kbd></button>
           </div>
         </>
       )}

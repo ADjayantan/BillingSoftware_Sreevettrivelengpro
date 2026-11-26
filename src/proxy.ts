@@ -11,12 +11,15 @@ const AUTH_PATIENCE = 6000;
 /** The one page that works without the cloud: static, so letting it through shows no data. */
 const SHELL = '/billing';
 
+/** Where a signed-in visitor starts while the cloud answers. */
+const HOME = '/home';
+
 /** Machine-scheduled cron endpoints authenticate strictly via Authorization: Bearer CRON_SECRET in their handlers. */
 const CRON_PATHS = new Set(['/api/cron/weekly-backup', '/api/cron/metal-rates', '/api/cron/reminders', '/api/cron/books']);
 
 const OUTAGE_PAGE = `<!doctype html><html lang="en-IN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>StudFlow · Cloud not answering</title>
-<style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-content:center;gap:16px;padding:16px;text-align:center;font:18px/1.5 system-ui,sans-serif}h1,p{margin:0}a{display:inline-block;padding:12px 20px;border:1px solid;border-radius:8px;font-weight:600;color:inherit;text-decoration:none}</style>
-<h1>The cloud is not answering</h1><p>Nothing is lost. Billing works meanwhile.</p><p><a href="${SHELL}">Open billing</a> <a href="">Try again</a></p></html>`;
+<style>:root{color-scheme:light}body{margin:0;min-height:100vh;display:grid;place-content:center;gap:14px;padding:16px;text-align:center;font:17px/1.5 'Segoe UI',system-ui,'Nirmala UI',sans-serif;color:#27333f;background:#fff;border-top:3px solid #b3243b;box-sizing:border-box}h1{font:400 30px/1.2 'Palatino Linotype',Palatino,'Noto Serif',Georgia,serif}h1,p{margin:0}a{display:inline-block;margin:4px;padding:11px 20px;border:1px solid #c2c8ce;border-radius:3px;font-weight:600;color:inherit;background:#fff;text-decoration:none}a.go{color:#fff;background:#84631f;border-color:#84631f;text-transform:uppercase;letter-spacing:.06em;font-size:15px}</style>
+<h1>The cloud is not answering</h1><p>Nothing is lost. Billing works meanwhile.</p><p><a class="go" href="${SHELL}">Open billing</a> <a href="">Try again</a></p></html>`;
 
 const hasSession = (request: NextRequest): boolean => request.cookies.getAll().some(({ name }) => /^sb-.+-auth-token(\.\d+)?$/.test(name));
 
@@ -89,7 +92,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     return carryCookies(response, NextResponse.redirect(login));
   }
   if (signedIn && (pathname === '/login' || pathname === '/')) {
-    return carryCookies(response, NextResponse.redirect(new URL('/billing', request.url)));
+    return carryCookies(response, NextResponse.redirect(new URL(HOME, request.url)));
   }
   return response;
 }

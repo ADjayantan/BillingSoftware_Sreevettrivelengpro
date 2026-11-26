@@ -1,22 +1,25 @@
 'use client';
 
 import { signOut } from '@/app/login/actions';
+import { keepCompanyName } from '@/lib/company-name';
 import { offlineEngine } from '@/lib/offline';
 import { forgetShell } from '@/lib/service-worker';
+import { Icon } from './icon';
 
-/** Takes the customer copy and the offline page off the PC before leaving. */
-export function SignOut() {
+/** Takes the customer copy, the company name and the offline page off the device before leaving. */
+export function SignOut({ className = '' }: { className?: string }) {
   async function leave(): Promise<void> {
     const engine = await offlineEngine();
     const unsent = engine ? await engine.unsent().catch(() => 0) : 0;
-    if (unsent > 0 && !window.confirm(`${unsent} bill(s) on this device are not sent yet. They stay here and go out at the next sign-in. Sign out?`)) return;
+    if (unsent > 0 && !window.confirm(`${unsent} bill${unsent === 1 ? ' is' : 's are'} still on this device. They stay here and go out when you sign in again. Sign out?`)) return;
     await engine?.forgetMasters().catch(() => undefined);
     await forgetShell();
+    keepCompanyName('');
     await signOut();
   }
   return (
-    <form action={leave} className="ml-auto">
-      <button className="rounded-md px-3 py-2 text-muted" type="submit">Sign out</button>
+    <form action={leave}>
+      <button className={className} type="submit"><Icon name="out" />Sign out</button>
     </form>
   );
 }

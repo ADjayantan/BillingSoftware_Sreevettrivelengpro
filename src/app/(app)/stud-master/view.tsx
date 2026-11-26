@@ -4,10 +4,11 @@ import { useRouter } from 'next/navigation';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { enterAdvances } from '@/components/enter-advance';
 import { Field, Notice } from '@/components/field';
+import { Icon } from '@/components/icon';
 import { useAltN } from '@/components/use-alt-n';
 import { api, type ApiResult } from '@/lib/api-client';
 import { weightForPieces, wholePiecesForWeight } from '@/lib/billing-math';
-import { trimZeros } from '@/lib/money';
+import { rateText, trimZeros } from '@/lib/money';
 import { offlineEngine, type OfflineEngine } from '@/lib/offline';
 import { attempt, blankProduct, editProduct, productInput, setStud, unitWeight, weightSpec, type ProductForm } from '@/lib/product-form';
 import { ownCode, productCode, productName } from '@/lib/products';
@@ -17,8 +18,8 @@ import type { StudItem } from '@/lib/schemas/masters';
 const inCopy = (work: (engine: OfflineEngine) => Promise<void>): void =>
   void offlineEngine().then((engine) => (engine ? work(engine) : undefined)).catch(() => undefined);
 
-export function ProductsView({ rows, search }: { rows: StudItem[]; search: ReactNode }) {
-  const [editing, setEditing] = useState<StudItem | 'new' | null>(null);
+export function ProductsView({ rows, search, pager, openNew }: { rows: StudItem[]; search: ReactNode; pager: ReactNode; openNew: boolean }) {
+  const [editing, setEditing] = useState<StudItem | 'new' | null>(openNew ? 'new' : null);
   const [saved, setSaved] = useState<{ product: StudItem; added: boolean } | null>(null);
   const open = (which: StudItem | 'new'): void => {
     setSaved(null);
@@ -27,10 +28,6 @@ export function ProductsView({ rows, search }: { rows: StudItem[]; search: React
   useAltN(() => open('new'));
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-start gap-3">
-        <div className="min-w-64 flex-1">{search}</div>
-        <button className="btn btn-primary" type="button" onClick={() => open('new')}>New product (Alt+N)</button>
-      </div>
       {saved ? (
         <div className="mb-3">
           <Notice>{saved.added ? 'Saved as ' : 'Saved '}<strong className="text-lg">{productCode(saved.product.product_no)}</strong> · {productName(saved.product)}</Notice>
@@ -45,29 +42,37 @@ export function ProductsView({ rows, search }: { rows: StudItem[]; search: React
           }}
         />
       ) : null}
-      <div className="card overflow-x-auto p-0">
+      <section className="card overflow-hidden p-0" aria-label="Products">
+        <div className="flex flex-wrap gap-2 p-3">
+          <div className="flex min-w-60 flex-1">{search}</div>
+          <button className="btn btn-primary" type="button" onClick={() => open('new')}><Icon name="plus" />New product<kbd className="kbd" data-alt-n>Alt N</kbd></button>
+        </div>
+        <div className="relative overflow-x-auto">
         <table className="grid-table">
-          <thead><tr><th>ID</th><th>Product</th><th>HSN</th><th className="num">GST %</th><th className="num">kg / piece</th><th className="num">₹ / piece</th><th className="num">₹ / kg</th></tr></thead>
+          <thead className="max-lg:sr-only"><tr><th>ID</th><th>Product</th><th>HSN</th><th className="num">GST %</th><th className="num">kg a piece</th><th className="num">₹ a piece</th><th className="num">₹ a kg</th></tr></thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.id} className={row.is_active ? '' : 'opacity-60'}>
-                <td className="font-semibold whitespace-nowrap tabular-nums">{productCode(row.product_no)}</td>
-                <td>
-                  <button type="button" className="cursor-pointer text-left font-semibold text-accent underline" onClick={() => open(row)}>{productName(row)}</button>
-                  {row.name !== null && ownCode(row) ? <span className="block text-sm text-muted">{ownCode(row)}</span> : null}
-                  {row.is_active ? null : <span className="block text-sm">Not in use</span>}
+                <td className="font-semibold whitespace-nowrap tabular-nums max-lg:hidden">{productCode(row.product_no)}</td>
+                <td className="max-lg:pl-4.5">
+                  <button type="button" className="row-link wrap-anywhere" onClick={() => open(row)}>{productName(row)}</button>
+                  {row.name !== null && ownCode(row) ? <span className="block text-[13px] text-muted">{ownCode(row)}</span> : null}
+                  {row.is_active ? null : <span className="block text-[13px]">Not in use</span>}
+                  <span className="block text-[13px] text-muted lg:hidden"><b className="font-semibold text-ink-2">{productCode(row.product_no)}</b> · HSN {row.hsn_sac} · GST {trimZeros(row.gst_rate_percent)}%</span>
                 </td>
-                <td>{row.hsn_sac}</td>
-                <td className="num">{trimZeros(row.gst_rate_percent)}</td>
-                <td className="num">{row.unit_weight_kg ?? '—'}{row.unit_weight_is_manual ? <span className="block text-sm text-muted">measured</span> : null}</td>
-                <td className="num">{row.default_rate_per_piece ? trimZeros(row.default_rate_per_piece) : '—'}</td>
-                <td className="num">{row.default_rate_per_kg ? trimZeros(row.default_rate_per_kg) : '—'}</td>
+                <td className="max-lg:hidden">{row.hsn_sac}</td>
+                <td className="num max-lg:hidden">{trimZeros(row.gst_rate_percent)}</td>
+                <td className="num max-lg:hidden">{row.unit_weight_kg ?? '—'}{row.unit_weight_is_manual ? <span className="block text-sm text-muted">measured</span> : null}</td>
+                <td className="num">{row.default_rate_per_piece ? rateText(row.default_rate_per_piece) : '—'}</td>
+                <td className="num max-lg:hidden">{row.default_rate_per_kg ? rateText(row.default_rate_per_kg) : '—'}</td>
               </tr>
             ))}
-            {rows.length === 0 ? <tr><td colSpan={7} className="text-muted">No products here yet.</td></tr> : null}
+            {rows.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-muted">No products here yet.</td></tr> : null}
           </tbody>
         </table>
-      </div>
+        </div>
+        {pager}
+      </section>
     </>
   );
 }
@@ -108,7 +113,7 @@ function ProductEditor({ product, onClose, onSaved }: { product: StudItem | null
   }
 
   async function remove(): Promise<void> {
-    if (!product || !window.confirm(`Delete ${productCode(product.product_no)} ${productName(product)}? Its ID is never used again. A product used on a bill cannot be deleted: untick Active instead.`)) return;
+    if (!product || !window.confirm(`Delete ${productCode(product.product_no)} ${productName(product)}? Its ID is never used again. A product used on a bill cannot be deleted: take the tick off In use instead.`)) return;
     if ((await send(api(`/api/stud-items/${product.id}`, 'DELETE'))) === null) return;
     inCopy((engine) => engine.forgetProduct(product.id));
     onClose();
@@ -116,7 +121,7 @@ function ProductEditor({ product, onClose, onSaved }: { product: StudItem | null
   }
 
   return (
-    <div className="mb-4 grid gap-4 lg:grid-cols-[2fr_1fr]">
+    <div className="mb-4 grid gap-4 xl:grid-cols-[2fr_1fr]">
       <form onSubmit={(event) => void save(event)} onKeyDown={enterAdvances} className="card grid content-start gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label={product ? 'Edit product' : 'New product'}>
         <p className="sm:col-span-2 lg:col-span-4">Product ID: <strong>{product ? productCode(product.product_no) : 'given when you save'}</strong></p>
         <Field label={form.isStud ? 'Product name (a stud may go without)' : 'Product name'} className="sm:col-span-2">
@@ -154,7 +159,7 @@ function ProductEditor({ product, onClose, onSaved }: { product: StudItem | null
               <input className="size-5" type="checkbox" checked={form.measured} onChange={(event) => patch({ measured: event.target.checked, kg: form.kg || (formula ?? '') })} /> Use a measured weight
             </label>
           ) : null}
-          <label className="flex items-center gap-2"><input className="size-5" type="checkbox" checked={form.active} onChange={(event) => patch({ active: event.target.checked })} /> Active</label>
+          <label className="flex items-center gap-2"><input className="size-5" type="checkbox" checked={form.active} onChange={(event) => patch({ active: event.target.checked })} /> In use</label>
         </div>
         {error ? <div className="sm:col-span-2 lg:col-span-4"><Notice tone="warn">{error}</Notice></div> : null}
         <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-4">

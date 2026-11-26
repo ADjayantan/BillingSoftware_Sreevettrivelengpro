@@ -7,5 +7,6 @@ export default defineConfig([
   ...nextTs,
   { rules: { '@typescript-eslint/no-explicit-any': 'error' } },
   // .claude: other sessions' working copies of this project, with builds of their own.
-  globalIgnores(['.next/**', 'out/**', 'coverage/**', 'next-env.d.ts', '.claude/**']),
+  // handoff/practice-copy: try-out tools for a PC, not the app (its README says what they do).
+  globalIgnores(['.next/**', 'out/**', 'coverage/**', 'next-env.d.ts', '.claude/**', 'handoff/practice-copy/**']),
 ]);

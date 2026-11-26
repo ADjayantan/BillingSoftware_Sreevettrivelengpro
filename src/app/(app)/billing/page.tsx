@@ -4,10 +4,5 @@ import { BillingScreen } from './screen';
 export const dynamic = 'error';
 
 export default function BillingPage() {
-  return (
-    <>
-      <h1 className="sr-only">New bill</h1>
-      <BillingScreen />
-    </>
-  );
+  return <BillingScreen />;
 }

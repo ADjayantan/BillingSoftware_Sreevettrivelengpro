@@ -228,7 +228,7 @@ describe('what the customer is told', () => {
   }
 
   it('says today, a week or 15 days only on that very day', async () => {
-    const LATENESS = ['Innaikku (', 'Oru vaaram aagudhu', '15 naal aagudhu'];
+    const LATENESS = ['is due today', 'a week ago', '15 days overdue'];
     const dueDates: [daysLate: number, dueDate: string][] = [
       [0, '2026-11-23'], [1, '2026-11-22'], [6, '2026-11-17'], [7, '2026-11-16'], [8, '2026-11-15'], [14, '2026-11-09'], [15, '2026-11-08'], [16, '2026-11-07'], [30, '2026-10-24'],
     ];
@@ -237,7 +237,7 @@ describe('what the customer is told', () => {
     const telegram = new FakeTelegram();
     await remind(telegram);
     expect(bills.map(([daysLate, no]) => [daysLate, ...LATENESS.filter((words) => draft(telegram, no).includes(words))])).toEqual([
-      [0, 'Innaikku ('], [1], [6], [7, 'Oru vaaram aagudhu'], [8], [14], [15, '15 naal aagudhu'], [16], [30],
+      [0, 'is due today'], [1], [6], [7, 'a week ago'], [8], [14], [15, '15 days overdue'], [16], [30],
     ]);
   });
 

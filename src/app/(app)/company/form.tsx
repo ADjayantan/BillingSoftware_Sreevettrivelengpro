@@ -5,6 +5,7 @@ import { useState, type FormEvent } from 'react';
 import { enterAdvances } from '@/components/enter-advance';
 import { Field, Notice } from '@/components/field';
 import { api } from '@/lib/api-client';
+import { keepCompanyName } from '@/lib/company-name';
 import type { Company } from '@/lib/schemas/masters';
 
 interface Box {
@@ -50,7 +51,9 @@ export function CompanyForm({ company }: { company: Company | null }) {
     const result = await api('/api/company', 'PUT', body);
     setBusy(false);
     setMessage(result.ok ? { tone: 'info', text: 'Saved. New bills will show these details.' } : { tone: 'warn', text: result.message });
-    if (result.ok) router.refresh(); // the sample below
+    if (!result.ok) return;
+    keepCompanyName(String(body.legal_name ?? '').trim()); // in the menu
+    router.refresh(); // the sample below
   }
 
   const box = ({ name, label, max, hint, required, wide, upper }: Box) => {
@@ -64,9 +67,9 @@ export function CompanyForm({ company }: { company: Company | null }) {
 
   return (
     <form onSubmit={(event) => void save(event)} onKeyDown={enterAdvances} className="card grid gap-3 sm:grid-cols-2" aria-label="Company details">
-      <h2 className="text-lg font-bold sm:col-span-2">Head of the bill</h2>
+      <h2 className="card-title sm:col-span-2">Top of the bill</h2>
       {HEAD.map(box)}
-      <h2 className="text-lg font-bold sm:col-span-2">Bank details on the bill</h2>
+      <h2 className="card-title mt-2 sm:col-span-2">Bank on the bill</h2>
       {BANK.map(box)}
       {message ? <div className="sm:col-span-2"><Notice tone={message.tone}>{message.text}</Notice></div> : null}
       <button className="btn btn-primary w-fit" type="submit" disabled={busy}>Save company</button>

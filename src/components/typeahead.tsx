@@ -140,7 +140,7 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
         onKeyDown={onKeyDown}
       />
       {open ? (
-        <ul id={listId} role="listbox" aria-label={inputLabel} className="absolute z-20 mt-1 max-h-80 w-full min-w-72 overflow-auto rounded-md border border-line bg-card shadow-lg">
+        <ul id={listId} role="listbox" aria-label={inputLabel} className="absolute z-20 mt-1 max-h-80 w-full min-w-72 overflow-auto rounded-[3px] border border-line-2 bg-card shadow-[0_14px_30px_-12px_rgb(39_51_63/0.35)]">
           {options.length === 0 ? <li role="presentation" className="px-3 py-2 text-muted">No match</li> : null}
           {options.map((option, i) => (
             <li
@@ -148,14 +148,14 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
               id={`${listId}-${i}`}
               role="option"
               aria-selected={i === active}
-              className={`cursor-pointer px-3 py-2 ${i === active ? 'bg-accent text-accent-ink' : ''}`}
+              className={`cursor-pointer px-3.5 py-2 ${i === active ? 'bg-soft shadow-[inset_3px_0_0_var(--accent)]' : 'hover:bg-sunken'}`}
               onMouseDown={(event) => {
                 event.preventDefault();
                 pick(option);
               }}
             >
               <span className="block font-semibold">{option.label}</span>
-              {option.detail ? <span className="block text-sm opacity-80">{option.detail}</span> : null}
+              {option.detail ? <span className="block text-sm text-muted">{option.detail}</span> : null}
             </li>
           ))}
           {adding ? (
@@ -163,7 +163,7 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
               id={`${listId}-${options.length}`}
               role="option"
               aria-selected={active === options.length}
-              className={`cursor-pointer border-t border-line px-3 py-2 font-semibold ${active === options.length ? 'bg-accent text-accent-ink' : 'text-accent'}`}
+              className={`cursor-pointer border-t border-line px-3.5 py-2 font-semibold text-accent ${active === options.length ? 'bg-soft shadow-[inset_3px_0_0_var(--accent)]' : 'hover:bg-sunken'}`}
               onMouseDown={(event) => {
                 event.preventDefault();
                 addTyped(text);
@@ -172,7 +172,7 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
               {adding.label(text.trim())}
             </li>
           ) : null}
-          {offline ? <li role="presentation" className="border-t border-line px-3 py-1 text-sm text-muted">Offline Mode · from this device</li> : null}
+          {offline ? <li role="presentation" className="border-t border-line px-3 py-1 text-sm text-muted">No internet · from this device</li> : null}
         </ul>
       ) : null}
     </div>

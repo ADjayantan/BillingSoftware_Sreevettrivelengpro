@@ -70,6 +70,12 @@ const LONG_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 /** '2026-11-01' -> 'November 2026' */
 export const monthName = (isoDate: string): string => `${LONG_MONTHS[Number(isoDate.slice(5, 7)) - 1] ?? ''} ${isoDate.slice(0, 4)}`;
 
+/** The month of a day and those before it: ['2026-11', '2026-10', …]. */
+export function lastMonths(isoDate: string, count: number): string[] {
+  const first = Number(isoDate.slice(0, 4)) * 12 + Number(isoDate.slice(5, 7)) - 1;
+  return Array.from({ length: count }, (_, back) => `${Math.floor((first - back) / 12)}-${String(((first - back) % 12) + 1).padStart(2, '0')}`);
+}
+
 /** '24 Nov, 10:32 am' in India time, for "when was this typed". */
 export const formatTime = (epochMs: number): string =>
   new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(epochMs);

@@ -1,4 +1,5 @@
 import { Field } from '@/components/field';
+import { STEP } from '@/lib/goods-steps';
 
 export interface Transport {
   transport_mode: string;
@@ -10,17 +11,16 @@ export interface Transport {
   status: string;
 }
 
-export const MODES = [
-  ['own_vehicle', 'Own vehicle'], ['transporter', 'Transporter'], ['courier', 'Courier'], ['customer_pickup', 'Customer pickup'], ['hand_delivery', 'Hand delivery'],
+const MODES = [
+  ['own_vehicle', 'Our vehicle'], ['transporter', 'Transporter'], ['courier', 'Courier'], ['customer_pickup', 'Customer takes it'], ['hand_delivery', 'By hand'],
 ] as const;
-export const STATUSES = [['pending', 'Pending'], ['packed', 'Packed'], ['dispatched', 'Dispatched'], ['delivered', 'Delivered']] as const;
 
-/** Shared by a new bill and the dispatch panel of an issued one. */
-export function TransportFields({ value, onChange }: { value: Transport; onChange: (value: Transport) => void }) {
+/** Shared by a new bill, an issued one and "Send goods". */
+export function TransportFields({ value, onChange, withStatus = true }: { value: Transport; onChange: (value: Transport) => void; withStatus?: boolean }) {
   const set = (field: keyof Transport) => (event: { target: { value: string } }) => onChange({ ...value, [field]: event.target.value });
   return (
     <>
-      <Field label="Transport">
+      <Field label="How it goes">
         <select className="field" value={value.transport_mode} onChange={set('transport_mode')}>
           {MODES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select>
@@ -29,12 +29,14 @@ export function TransportFields({ value, onChange }: { value: Transport; onChang
       <Field label="Driver name"><input className="field" maxLength={80} value={value.driver_name} onChange={set('driver_name')} /></Field>
       <Field label="Driver phone"><input className="field" type="tel" maxLength={20} value={value.driver_phone} onChange={set('driver_phone')} /></Field>
       <Field label="LR number"><input className="field" maxLength={40} value={value.lr_number} onChange={set('lr_number')} /></Field>
-      <Field label="Dispatch status">
-        <select className="field" value={value.status} onChange={set('status')}>
-          {STATUSES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-        </select>
-      </Field>
-      <Field label="Deliver to, if different" className="sm:col-span-2"><input className="field" maxLength={500} value={value.delivery_address} onChange={set('delivery_address')} /></Field>
+      {withStatus ? (
+        <Field label="Where the goods are">
+          <select className="field" value={value.status} onChange={set('status')}>
+            {Object.entries(STEP).map(([key, { text }]) => <option key={key} value={key}>{text}</option>)}
+          </select>
+        </Field>
+      ) : null}
+      <Field label="Deliver to, if it is another place" className="sm:col-span-2"><input className="field" maxLength={500} value={value.delivery_address} onChange={set('delivery_address')} /></Field>
     </>
   );
 }

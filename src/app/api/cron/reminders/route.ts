@@ -224,7 +224,7 @@ export async function runPaymentRemindersCron(options: {
       dueDate: inv.due_date,
       balancePaise,
     };
-    const baseMessage = stage ? reminderText(stage, 'tanglish', facts) : invoiceSummaryText(facts);
+    const baseMessage = stage ? reminderText(stage, facts) : invoiceSummaryText(facts);
     const whatsapp_message = inv.pdf_drive_url
       ? `${baseMessage}\nInvoice PDF: ${inv.pdf_drive_url}`
       : baseMessage;

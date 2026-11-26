@@ -434,3 +434,38 @@ describe('the buyer’s order (P.O.)', () => {
     expect(f.reviveForm({ tempId: TEMP, type: 'supply', lines: [] }, '2026-11-24')).toMatchObject({ poNo: '', poDate: '' });
   });
 });
+
+describe('the goods of the last bill again', () => {
+  const earlier = (over: Partial<f.EarlierGoods> = {}): f.EarlierGoods => ({ stud: nut, description: 'Hex nut M12 GI', hsn_sac: '7318', billing_unit: 'pcs', quantity: '250', rate: '4.25', ...over });
+
+  it('a product brings its own GST and HSN of today; the words, the quantity and the rate are the earlier ones', () => {
+    const form = f.repeatGoods(f.newBill(TEMP, '2026-11-23'), [earlier({ description: 'Hex nut, hot dip' })]);
+    expect(form.lines[0]).toMatchObject({ stud: nut, text: 'Hex nut, hot dip', hsn: '731816', gst: '18', gstFrom: 'product', unit: 'pcs', quantity: '250', rate: '4.25' });
+    expect(form.lines).toHaveLength(2);
+    expect(f.isBlank(form.lines[1]!)).toBe(true);
+    expect('bill' in f.previewBill({ ...form, customer })).toBe(true);
+  });
+
+  it('sold by the kilo stays by the kilo', () => {
+    expect(f.repeatGoods(f.newBill(TEMP, '2026-11-23'), [earlier({ stud, billing_unit: 'kg', quantity: '12.5', rate: '160' })]).lines[0]).toMatchObject({ unit: 'kg', quantity: '12.5', rate: '160', gst: '5' });
+  });
+
+  it('without a product the GST % is typed by a person again', () => {
+    const form = f.repeatGoods({ ...f.newBill(TEMP, '2026-11-23'), customer }, [earlier({ stud: null, description: 'Special bolt' })]);
+    expect(form.lines[0]).toMatchObject({ stud: null, text: 'Special bolt', hsn: '7318', gst: '', gstFrom: '' });
+    expect(f.previewBill(form)).toMatchObject({ problem: 'Line 1 needs its GST %' });
+  });
+
+  it('what is typed already stays, and every line keeps a key of its own', () => {
+    let lines = [blank()];
+    lines = change(lines, 1, (line) => f.typeGst({ ...line, text: 'Cutting', quantity: '1', rate: '10' }, '18'));
+    const form = f.repeatGoods(bill(lines), [earlier(), earlier({ stud })]);
+    expect(form.lines.map((line) => line.text)).toEqual(['Cutting', 'Hex nut M12 GI', 'Hex nut M12 GI', '']);
+    expect(new Set(form.lines.map((line) => line.key)).size).toBe(4);
+  });
+
+  it('on a job-work bill the goods bring no price of theirs', () => {
+    const form = f.repeatGoods(f.newBill(TEMP, '2026-11-23', 'job_work'), [earlier({ stud, description: 'Threading MS-M8-45-FT', hsn_sac: '998873', rate: '0.8' })]);
+    expect(form.lines[0]).toMatchObject({ text: 'Threading MS-M8-45-FT', hsn: '998873', gst: '', rate: '0.8' });
+  });
+});

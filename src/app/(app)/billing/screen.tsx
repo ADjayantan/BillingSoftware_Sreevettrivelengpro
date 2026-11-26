@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 import { enterAdvances } from '@/components/enter-advance';
 import { Field, Notice } from '@/components/field';
+import { Icon } from '@/components/icon';
 import { Typeahead } from '@/components/typeahead';
 import { useAltN } from '@/components/use-alt-n';
 import { addressSaved } from '@/lib/add-customer';
@@ -13,11 +14,12 @@ import { distinctRates } from '@/lib/bill-draft';
 import * as f from '@/lib/bill-form';
 import { connection, onConnection } from '@/lib/connection';
 import { newCustomerFrom } from '@/lib/customer-form';
-import { addDays, formatTime, istDate } from '@/lib/india';
+import { addDays, formatDate, formatTime, istDate } from '@/lib/india';
 import { customerDetail, onlyStudByCode, openLots, searchCustomers, searchStuds } from '@/lib/master-search';
-import { formatInr, formatPaise, trimZeros } from '@/lib/money';
+import { decimalToPaise, formatInr, formatPaise, formatRupees, rupeesInWords, trimZeros } from '@/lib/money';
 import { offlineEngine, type OfflineEngine } from '@/lib/offline';
 import { productCode } from '@/lib/products';
+import type { CustomerGlance } from '@/lib/schemas/home';
 import type { Customer, StudItem } from '@/lib/schemas/masters';
 import { NewCustomer } from './new-customer';
 import { SavedBill } from './saved-bill';
@@ -46,7 +48,7 @@ interface ParsedDraftReply {
 }
 
 interface MarginCheckReply {
-  margin_alerts: Array<{ code: 'LOW_MARGIN'; line: number; warning_tanglish: string }>;
+  margin_alerts: Array<{ code: 'LOW_MARGIN'; line: number }>;
   warnings: Array<{ code: string; line: number }>;
 }
 
@@ -56,6 +58,9 @@ function parseNumericRateFromMention(mention: string | null, blocked: boolean): 
   const m = /\b(\d+(?:\.\d{1,4})?)\b/.exec(mention.replace(/,/g, ''));
   return m?.[1] ? trimZeros(m[1]) : '';
 }
+
+/** The program only warns; the rate stays the owner's to decide. */
+const LOW_RATE = 'This rate looks too low for today’s steel rate';
 
 /** One id per bill, from the first moment, kept through crashes, retries and edits. */
 const mintId = (): string => `OFFLINE-${crypto.randomUUID()}`;
@@ -117,7 +122,7 @@ export function BillingScreen() {
     setOpened((old) => ({ turn: (old?.turn ?? 0) + 1, form, engine: old?.engine ?? null, restoredAt: null, ...(error ? { error } : {}) }));
   }
 
-  if (!opened) return <p className="text-muted" role="status">Opening…</p>;
+  if (!opened) return <><h1 className="page-title">New bill</h1><p className="text-muted" role="status">Opening…</p></>;
   return <BillEditor key={opened.turn} opened={opened} onNew={(type) => void show(mintForm(type))} onReopen={(form, error) => void show(form, error)} />;
 }
 
@@ -255,6 +260,29 @@ function BillEditor({ opened, onNew, onReopen }: {
 
   useAltN(() => (saved ? void startNew() : clear()));
 
+  // What this customer owes and bought last: a help, asked for beside the bill and never waited for.
+  const asked = form.customer && onlyHere !== form.customer.id && !isOffline ? `${form.customer.id}?type=${form.type}` : null;
+  const [seen, setSeen] = useState<{ of: string; glance: CustomerGlance } | null>(null);
+  const glance = seen !== null && seen.of === asked ? seen.glance : null;
+  useEffect(() => {
+    if (asked === null) return;
+    let left = false;
+    void api<CustomerGlance>(`/api/customers/${asked.replace('?', '/glance?')}`).then((reply) => {
+      if (!left && reply.ok) setSeen({ of: asked, glance: reply.data });
+    });
+    return () => {
+      left = true;
+    };
+  }, [asked]);
+
+  function sameAgain(): void {
+    const last = glance?.last;
+    if (!last) return;
+    const next = f.repeatGoods(latest.current, last.lines);
+    setForm(next);
+    putCursor(f.firstUnfinished(next).place === 'line' ? f.firstUnfinished(next) : { place: 'line', key: next.lines[0]?.key ?? 1, box: 'quantity' });
+  }
+
   const preview = f.previewBill(form);
   const bill = preview.bill ?? null;
   const amounts = bill?.detail.amounts ?? null;
@@ -293,7 +321,7 @@ function BillEditor({ opened, onNew, onReopen }: {
         const next: Record<number, string> = {};
         for (const alert of res.data.margin_alerts) {
           const target = candidates[alert.line];
-          if (target) next[target.line.key] = alert.warning_tanglish;
+          if (target) next[target.line.key] = LOW_RATE;
         }
         setMarginState({ sig: marginSignature, alerts: next });
       })();
@@ -374,11 +402,7 @@ function BillEditor({ opened, onNew, onReopen }: {
     }));
     if (resolvedCustomer) void loadLots(resolvedCustomer);
     setAiBusy(false);
-    setAiStatus(
-      parsed.warnings.length > 0
-        ? `Draft filled (${parsed.warnings.map((w) => w.code).join(', ')}) — verify totals below.`
-        : 'Draft filled from Tanglish note — verify fields before saving.',
-    );
+    setAiStatus(parsed.warnings.length > 0 ? 'Filled, but something was not clear. Check every box before you save.' : 'Filled. Check every box before you save.');
   }
 
   function startVoiceMic(): void {
@@ -417,7 +441,7 @@ function BillEditor({ opened, onNew, onReopen }: {
       ).webkitSpeechRecognition;
 
     if (!SpeechCtor) {
-      setAiStatus('Voice dictation is not supported in this browser; type Tanglish directly.');
+      setAiStatus('This browser cannot listen. Type it here instead.');
       return;
     }
     const rec = new SpeechCtor();
@@ -437,7 +461,7 @@ function BillEditor({ opened, onNew, onReopen }: {
     event.preventDefault();
     if (busy || saved) return;
     if (form.newCustomer) {
-      setError('Finish the new customer first: Save & use in this bill');
+      setError('Finish the new customer first: Save and use in this bill');
       return putCursor({ place: 'customer' });
     }
     if ('problem' in preview || !bill) {
@@ -481,251 +505,272 @@ function BillEditor({ opened, onNew, onReopen }: {
   }
 
   return (
-    <form ref={page} onSubmit={(event) => void save(event)} onKeyDown={enterAdvances} aria-label="New bill" className="grid gap-4 pb-28">
-      {engine ? null : <Notice tone="warn">This browser cannot store bills: an unsaved bill is lost if the PC stops. Use a normal window, not a private one.</Notice>}
-      {noCompany ? <Notice tone="warn">Bills carry your company details. <Link className="underline" href="/company">Fill them in first</Link>.</Notice> : null}
-      {restored ? (
-        <p role="status" className="flex flex-wrap items-center gap-3 rounded-md border border-accent px-3 py-2">
-          <span className="font-semibold">Restored the bill you were typing{restoredAt ? ` (${formatTime(restoredAt)})` : ''}.</span>
-          <button type="button" className="underline" onClick={() => setRestored(false)}>OK</button>
-          <button type="button" className="underline" onClick={clear}>Start fresh</button>
-        </p>
-      ) : null}
-      <section className={`card grid gap-2 ${isOffline ? 'max-sm:hidden' : ''}`} aria-label="Tanglish voice or text quick-fill">
-        <div className="flex flex-wrap items-center gap-2">
+    <form ref={page} data-billing onSubmit={(event) => void save(event)} onKeyDown={enterAdvances} aria-label="New bill" className="pb-24 lg:pb-0">
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="min-w-0">
+          <h1 className="page-title">New bill</h1>
+          <p className="mt-0.5 text-[14.5px] text-muted">{engine ? 'Kept on this device while you type' : 'Not kept on this device'}</p>
+        </div>
+        <div role="group" aria-label="Kind of bill" className="ml-auto inline-flex rounded-[3px] border border-line-2 p-[3px]">
+          {([['supply', 'Sale'], ['job_work', 'Job work']] as const).map(([type, label]) => (
+            <button
+              key={type} type="button" aria-pressed={form.type === type} onClick={() => setForm((old) => f.changeType(old, type))}
+              className={`min-h-10 cursor-pointer rounded-[2px] px-4.5 text-[13.5px] font-semibold tracking-[0.06em] uppercase ${form.type === type ? 'bg-slate text-white' : 'text-ink-2 hover:text-ink'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="grid gap-2.5 *:last:mb-3.5 empty:hidden">
+        {engine ? null : <Notice tone="warn">This browser cannot keep bills. If the PC stops, an unsaved bill is lost. Use a normal window, not a private one.</Notice>}
+        {noCompany ? <Notice tone="warn">Bills carry your company details. <Link className="underline" href="/company">Fill them in first</Link>.</Notice> : null}
+        {restored ? (
+          <p role="status" className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-[3px] border-l-[3px] border-paid bg-paid-bg px-3.5 py-2.5 text-paid">
+            <span className="font-semibold">Here is the bill you did not finish{restoredAt ? ` (${formatTime(restoredAt)})` : ''}.</span>
+            <button type="button" className="cursor-pointer font-semibold underline" onClick={() => setRestored(false)}>Go on</button>
+            <button type="button" className="cursor-pointer font-semibold underline" onClick={clear}>Start a new one</button>
+          </p>
+        ) : null}
+      </div>
+      <section className={`mb-4.5 ${isOffline ? 'max-sm:hidden' : ''}`} aria-label="Say or type the bill">
+        <div className="find-box h-auto gap-1.5 py-1 pr-1.5 pl-1.5">
+          <button type="button" className="grid size-10 flex-none cursor-pointer place-items-center rounded-full text-slate hover:bg-soft disabled:opacity-40" disabled={isOffline || aiBusy || listening} onClick={startVoiceMic} aria-label="Speak the bill"><Icon name="mic" /></button>
           <input
-            aria-label="Tanglish quick-fill transcript"
-            data-enter-skip
-            className="field min-w-0 flex-1"
-            placeholder={
-              isOffline
-                ? 'Offline mode: Voice/AI quick-fill is paused; manual billing works offline'
-                : 'Tanglish / voice note (e.g. Vellaru-ku MS M8 x 45 mm full thread, 200 pcs, piece-ku 3.10)…'
-            }
-            disabled={isOffline || aiBusy}
-            value={aiText}
+            aria-label="Say or type the bill" data-enter-skip className="min-h-10 min-w-0 flex-1 bg-transparent text-[15.5px] outline-none placeholder:text-muted" disabled={isOffline || aiBusy} value={aiText}
+            placeholder={isOffline ? 'This needs internet. Type the bill below.' : listening ? 'Listening…' : 'Say or type it: Murugan, M8 x 45 MS stud, 200 pieces, 3.10 each'}
             onChange={(event) => setAiText(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                void applyAiQuickFill();
-              }
+              if (event.key !== 'Enter') return;
+              event.preventDefault();
+              void applyAiQuickFill();
             }}
           />
-          <button
-            type="button"
-            className="btn"
-            disabled={isOffline || aiBusy || listening}
-            onClick={startVoiceMic}
-            aria-label="Dictate Tanglish bill"
-          >
-            {listening ? 'Listening…' : 'Mic'}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={isOffline || aiBusy || aiText.trim() === ''}
-            onClick={() => void applyAiQuickFill()}
-          >
-            {aiBusy ? 'Filling…' : 'Fill draft'}
-          </button>
+          <button type="button" className="btn btn-small rounded-full" disabled={isOffline || aiBusy || aiText.trim() === ''} onClick={() => void applyAiQuickFill()}>{aiBusy ? 'Filling…' : 'Fill bill'}</button>
         </div>
-        {isOffline ? (
-          <p className="text-sm text-muted">Voice/AI quick-fill needs internet; manual billing and offline queue work normally.</p>
-        ) : aiStatus ? (
-          <p role="status" className="text-sm text-muted">{aiStatus}</p>
-        ) : null}
+        {aiStatus && !isOffline ? <p role="status" className="px-4 pt-1.5 text-sm text-muted">{aiStatus}</p> : null}
       </section>
-      <section className="card grid grid-cols-2 gap-3 lg:grid-cols-[auto_2fr_1fr_1fr_1fr]">
-        <fieldset className="col-span-2 sm:col-span-1">
-          <legend className="mb-1 text-sm font-semibold">Bill</legend>
-          <div className="flex gap-1">
-            {(['supply', 'job_work'] as const).map((type) => (
-              <button key={type} type="button" aria-pressed={form.type === type} className={`btn ${form.type === type ? 'btn-primary' : ''}`} onClick={() => setForm((old) => f.changeType(old, type))}>
-                {type === 'supply' ? 'Supply' : 'Job work'}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-        <div data-place="customer" className="col-span-2 sm:col-span-1">
-          {form.newCustomer ? (
-            <Field label="Customer" hint="Fill in the new customer below">
-              <input className="field" data-enter-skip readOnly tabIndex={-1} value={form.newCustomer.name || form.customerText} />
-            </Field>
-          ) : (
-            <Field
-              label="Customer"
-              hint={form.customer ? `${customerDetail(form.customer)}${onlyHere === form.customer.id ? ' · new, saved on this device' : ''}` : 'Type a name, phone or GSTIN'}
-            >
-              <Typeahead
-                inputLabel="Customer" autoFocus text={form.customerText} search={searchCustomers}
-                add={form.customer ? undefined : { label: addLabel, onAdd: openNew }}
-                onText={(customerText) => {
-                  if (form.customer) void loadLots(null);
-                  patch({ customerText, customer: null });
-                }}
-                onPick={(option) => pickCustomer(option.value)}
-              />
-            </Field>
-          )}
-          {form.customer || form.newCustomer || form.customerText.trim() === '' ? null : (
-            <button type="button" className="btn mt-2 text-left text-accent" onClick={() => openNew(form.customerText)}>{addLabel(form.customerText.trim())}</button>
-          )}
-        </div>
-        <Field label="Date"><input className="field" data-enter-skip type="date" required min={addDays(form.today, -31)} max={form.today} value={form.invoiceDate} onChange={(event) => patch({ invoiceDate: event.target.value || form.today })} /></Field>
-        <Field label="Due"><input className="field" data-enter-skip type="date" required min={form.invoiceDate} value={f.dueDateOf(form)} onChange={(event) => patch({ dueDate: event.target.value || null })} /></Field>
-        <Field label="P.O. No."><input className="field" data-enter-skip maxLength={40} placeholder="If there is one" value={form.poNo} onChange={(event) => patch({ poNo: event.target.value })} /></Field>
-        {form.poNo.trim() === '' ? null : (
-          <Field label="P.O. date" className="lg:col-start-5"><input className="field" data-enter-skip={form.poDate === '' ? undefined : true} type="date" max={form.today} value={form.poDate} onChange={(event) => patch({ poDate: event.target.value })} /></Field>
-        )}
-        {form.customer && needsAddress ? (
-          <AddressBox
-            key={form.customer.id} customer={form.customer} engine={engine}
-            onSaved={(customer) => {
-              const next = { ...latest.current, customer };
-              patch({ customer });
-              setError(null);
-              putCursor(f.firstUnfinished(next));
-            }}
-          />
-        ) : null}
-      </section>
-      {form.newCustomer ? (
-        <NewCustomer
-          key={form.newCustomer.id} value={form.newCustomer} engine={engine}
-          onChange={(newCustomer) => patch({ newCustomer })} onUse={takeNew}
-          onCancel={() => {
-            setError(null);
-            patch({ newCustomer: null });
-            putCursor({ place: 'customer' });
-          }}
-        />
-      ) : null}
 
-      <section className="card grid gap-3" aria-label="Lines">
-        {form.lines.map((line, i) => {
-          const other = f.supporting(line);
-          const position = typedLines.indexOf(line);
-          const computed = position >= 0 ? bill?.detail.lines[position] : undefined;
-          const about = [
-            line.stud && line.stud.product_no > 0 ? productCode(line.stud.product_no) : null,
-            other.weightKg ? `${other.weightKg} kg` : other.pieces ? `≈ ${other.pieces} pcs` : null,
-          ].filter(Boolean).join(' · ');
-          const named = (name: string): string => `${name}, line ${i + 1}`;
-          return (
-            <div key={line.key} data-line={line.key} className="grid grid-cols-6 items-start gap-2 border-b border-line pb-3 last:border-0 last:pb-0 md:grid-cols-[6rem_5.5rem_7rem_6.5rem_5rem_minmax(0,1fr)_3rem] xl:grid-cols-[minmax(0,1fr)_6rem_5.5rem_7rem_6.5rem_5rem_8rem_3rem]">
-              <Cell name="Product or ID" first={i === 0} box="text" className="col-span-5 md:col-span-7 xl:col-span-1">
-                <Typeahead
-                  inputLabel={named('Product or ID')} placeholder={i === 0 ? 'ID, name or own code' : 'Next item, or Enter to finish'} text={line.text} search={searchStuds}
-                  onText={(text) => patchLine(line.key, (old) => f.typeText(old, text, form.type))}
-                  onPick={(option) => patchLine(line.key, (old) => f.pickStud(old, option.value, form.type))}
-                  onEmptyEnter={() => {
-                    if (!f.isBlank(line) || i === 0) return false;
-                    putCursor({ place: 'packing' });
-                    return true;
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_310px] xl:grid-cols-[minmax(0,1fr)_336px]">
+        <div className="card divide-y divide-line p-0">
+          <section className="px-5 pt-4.5 pb-5" aria-label="Customer">
+            <Step no={1} done={form.customer !== null}>Customer</Step>
+            <div data-place="customer">
+              {form.newCustomer ? (
+                <Field label="Customer" hint="Fill in the new customer below">
+                  <input className="field" data-enter-skip readOnly tabIndex={-1} value={form.newCustomer.name || form.customerText} />
+                </Field>
+              ) : (
+                <Field label="Customer" hint={form.customer ? `${customerDetail(form.customer)}${onlyHere === form.customer.id ? ' · new, saved on this device' : ''}` : 'Type a name, phone or GSTIN'}>
+                  <Typeahead
+                    inputLabel="Customer" autoFocus text={form.customerText} search={searchCustomers}
+                    add={form.customer ? undefined : { label: addLabel, onAdd: openNew }}
+                    onText={(customerText) => {
+                      if (form.customer) void loadLots(null);
+                      patch({ customerText, customer: null });
+                    }}
+                    onPick={(option) => pickCustomer(option.value)}
+                  />
+                </Field>
+              )}
+              {form.customer || form.newCustomer || form.customerText.trim() === '' ? null : (
+                <button type="button" className="btn mt-2 text-left text-accent" onClick={() => openNew(form.customerText)}>{addLabel(form.customerText.trim())}</button>
+              )}
+            </div>
+            <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(min(9.6rem,100%),1fr))] gap-3">
+              <Field label="Date"><input className="field" data-enter-skip type="date" required min={addDays(form.today, -31)} max={form.today} value={form.invoiceDate} onChange={(event) => patch({ invoiceDate: event.target.value || form.today })} /></Field>
+              <Field label="Due"><input className="field" data-enter-skip type="date" required min={form.invoiceDate} value={f.dueDateOf(form)} onChange={(event) => patch({ dueDate: event.target.value || null })} /></Field>
+              <Field label="P.O. No."><input className="field" data-enter-skip maxLength={40} placeholder="If there is one" value={form.poNo} onChange={(event) => patch({ poNo: event.target.value })} /></Field>
+              {form.poNo.trim() === '' ? null : (
+                <Field label="P.O. date"><input className="field" data-enter-skip={form.poDate === '' ? undefined : true} type="date" max={form.today} value={form.poDate} onChange={(event) => patch({ poDate: event.target.value })} /></Field>
+              )}
+            </div>
+            {form.customer && needsAddress ? (
+              <AddressBox
+                key={form.customer.id} customer={form.customer} engine={engine}
+                onSaved={(customer) => {
+                  const next = { ...latest.current, customer };
+                  patch({ customer });
+                  setError(null);
+                  putCursor(f.firstUnfinished(next));
+                }}
+              />
+            ) : null}
+            {form.newCustomer ? (
+              <div className="mt-3">
+                <NewCustomer
+                  key={form.newCustomer.id} value={form.newCustomer} engine={engine}
+                  onChange={(newCustomer) => patch({ newCustomer })} onUse={takeNew}
+                  onCancel={() => {
+                    setError(null);
+                    patch({ newCustomer: null });
+                    putCursor({ place: 'customer' });
                   }}
                 />
-                {about ? <p className="mt-1 text-sm text-muted">{about}</p> : null}
-                {marginAlerts[line.key] ? (
-                  <p role="status" className="mt-1 text-sm font-semibold text-warn">{marginAlerts[line.key]}</p>
-                ) : null}
-              </Cell>
-              <Cell name="Qty" first={i === 0} box="quantity">
-                <input aria-label={named('Qty')} placeholder="Qty" className="field num" inputMode="decimal" value={line.quantity} onChange={(event) => patchLine(line.key, (old) => ({ ...old, quantity: event.target.value.trim() }))} />
-              </Cell>
-              <Cell name="Unit" first={i === 0}>
-                <select aria-label={named('Unit')} data-enter-skip className="field" value={line.unit} onChange={(event) => patchLine(line.key, (old) => f.changeUnit(old, event.target.value === 'kg' ? 'kg' : 'pcs', form.type))}>
-                  <option value="pcs">pcs</option><option value="kg">kg</option>
-                </select>
-              </Cell>
-              <Cell name="Rate ₹" first={i === 0} box="rate">
-                <input aria-label={named('Rate ₹')} placeholder="Rate ₹" className="field num" inputMode="decimal" value={line.rate} onChange={(event) => patchLine(line.key, (old) => ({ ...old, rate: event.target.value.trim() }))} />
-              </Cell>
-              <Cell name="HSN/SAC" first={i === 0}>
-                <input aria-label={named('HSN/SAC')} placeholder="HSN/SAC" data-enter-skip className="field" inputMode="numeric" value={line.hsn} onChange={(event) => patchLine(line.key, (old) => ({ ...old, hsn: event.target.value.trim() }))} />
-              </Cell>
-              <Cell name="GST %" first={i === 0} box="gst">
-                {/* Enter stops here only while it is empty: a person has to type it. */}
-                <input aria-label={named('GST %')} placeholder="GST %" data-enter-skip={line.gst === '' ? undefined : true} className="field num" inputMode="decimal" value={line.gst} onChange={(event) => patchLine(line.key, (old) => f.typeGst(old, event.target.value))} />
-              </Cell>
-              <Cell name="Amount" first={i === 0}>
-                <output aria-label={named('Amount')} className="num flex min-h-12 items-center justify-end text-lg font-semibold">{computed ? formatPaise(computed.line_total_paise) : ''}</output>
-              </Cell>
-              <Cell name={'\u00a0'} first={i === 0} className="col-span-1 col-start-6 row-start-1 md:col-start-auto md:row-start-auto">
-                {f.isBlank(line) ? null : (
-                  <button type="button" aria-label={`Remove line ${i + 1}`} className="btn w-full px-2" onClick={() => setForm((old) => ({ ...old, lines: f.withTrailingBlank(old.lines.filter((other_) => other_.key !== line.key), old.type) }))}>✕</button>
-                )}
-              </Cell>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="px-5 pt-4.5 pb-5" aria-label="Items">
+            <Step no={2} done={amounts !== null} note="Enter goes on">Items</Step>
+            {glance?.last && glance.last.lines.length > 0 && typedLines.length === 0 ? (
+              <p className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[3px] border border-[#ece2c9] bg-soft py-2 pr-2 pl-3.5 text-[15px] text-ink-2">
+                <span className="min-w-0 flex-1">Last bill, {formatDate(glance.last.invoice_date)}: <b>{glance.last.lines.length} item{glance.last.lines.length === 1 ? '' : 's'}, {formatRupees(decimalToPaise(glance.last.grand_total))}</b></span>
+                <button type="button" className="btn btn-small" onClick={sameAgain}>Same items again</button>
+              </p>
+            ) : null}
+            <div aria-hidden className={`mb-1.5 hidden gap-2 text-[13px] font-semibold text-muted lg:grid ${LINE_COLUMNS}`}>
+              <span>Product</span><span className="num">Qty</span><span>Unit</span><span className="num">Rate ₹</span><span className="num">Amount ₹</span><span />
             </div>
-          );
-        })}
-      </section>
+            {form.lines.map((line, i) => {
+              const other = f.supporting(line);
+              const position = typedLines.indexOf(line);
+              const computed = position >= 0 ? bill?.detail.lines[position] : undefined;
+              const about = [
+                line.stud && line.stud.product_no > 0 ? productCode(line.stud.product_no) : null,
+                other.weightKg ? `${trimZeros(Number(other.weightKg).toFixed(3))} kg` : other.pieces ? `about ${other.pieces} pcs` : null,
+              ].filter(Boolean).join(' · ');
+              const named = (name: string): string => `${name}, line ${i + 1}`;
+              const blank = f.isBlank(line);
+              return (
+                <div key={line.key} data-line={line.key} className={`grid grid-cols-6 items-start gap-x-2 gap-y-1.5 border-t border-line py-2.5 md:grid-cols-[6rem_5.4rem_7rem_minmax(0,1fr)_2.6rem] ${LINE_COLUMNS}`}>
+                  <Cell name="Product" box="text" className="col-span-5 md:col-span-4 lg:col-span-1">
+                    <Typeahead
+                      inputLabel={named('Product or ID')} placeholder={i === 0 ? 'Product name, ID or code' : 'Next item, or Enter to finish'} text={line.text} search={searchStuds}
+                      onText={(text) => patchLine(line.key, (old) => f.typeText(old, text, form.type))}
+                      onPick={(option) => patchLine(line.key, (old) => f.pickStud(old, option.value, form.type))}
+                      onEmptyEnter={() => {
+                        if (!blank || i === 0) return false;
+                        putCursor({ place: 'packing' });
+                        return true;
+                      }}
+                    />
+                  </Cell>
+                  <Cell name="Qty" box="quantity" className="col-span-2 md:col-span-1 md:row-start-2 lg:col-start-2 lg:row-start-1">
+                    <input aria-label={named('Qty')} placeholder="Qty" className="field num px-2.5" inputMode="decimal" value={line.quantity} onChange={(event) => patchLine(line.key, (old) => ({ ...old, quantity: event.target.value.trim() }))} />
+                  </Cell>
+                  <Cell name="Unit" className="col-span-2 md:col-span-1 md:row-start-2 lg:col-start-3 lg:row-start-1">
+                    <select aria-label={named('Unit')} data-enter-skip className="field px-2" value={line.unit} onChange={(event) => patchLine(line.key, (old) => f.changeUnit(old, event.target.value === 'kg' ? 'kg' : 'pcs', form.type))}>
+                      <option value="pcs">pcs</option><option value="kg">kg</option>
+                    </select>
+                  </Cell>
+                  <Cell name="Rate ₹" box="rate" className="col-span-2 md:col-span-1 md:row-start-2 lg:col-start-4 lg:row-start-1">
+                    <input aria-label={named('Rate ₹')} placeholder="Rate" className="field num px-2.5" inputMode="decimal" value={line.rate} onChange={(event) => patchLine(line.key, (old) => ({ ...old, rate: event.target.value.trim() }))} />
+                  </Cell>
+                  <div className={`col-span-6 flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-muted md:col-span-full md:row-start-3 lg:row-start-2 ${blank && i > 0 ? 'hidden' : 'flex'}`}>
+                    {about ? <span>{about}</span> : null}
+                    <label className="flex items-center gap-1.5">HSN
+                      <input aria-label={named('HSN/SAC')} data-enter-skip className="field min-h-9 w-[6.4rem] px-2 py-1 text-[15px]" inputMode="numeric" value={line.hsn} onChange={(event) => patchLine(line.key, (old) => ({ ...old, hsn: event.target.value.trim() }))} />
+                    </label>
+                    <label data-box="gst" className={`flex items-center gap-1.5 ${line.gst === '' && !blank ? 'font-semibold text-due' : ''}`}>GST %
+                      {/* Enter stops here only while it is empty: a person has to type it. */}
+                      <input aria-label={named('GST %')} data-enter-skip={line.gst === '' ? undefined : true} className={`field num min-h-9 w-[4.2rem] px-2 py-1 text-[15px] ${line.gst === '' && !blank ? 'border-due bg-due-bg' : ''}`} inputMode="decimal" value={line.gst} onChange={(event) => patchLine(line.key, (old) => f.typeGst(old, event.target.value))} />
+                    </label>
+                    {marginAlerts[line.key] ? <span role="status" className="flex items-center gap-1.5 font-semibold text-due"><Icon name="alert" className="size-4" />{marginAlerts[line.key]}</span> : null}
+                  </div>
+                  <Cell name="Amount ₹" className={`col-span-6 max-md:items-baseline max-md:justify-between ${blank ? 'max-md:hidden' : 'max-md:flex'} md:col-span-1 md:col-start-4 md:row-start-2 lg:col-start-5 lg:row-start-1`}>
+                    <output aria-label={named('Amount')} className="num flex min-h-11.5 items-center justify-end text-[17px] font-semibold max-md:min-h-0">{computed ? formatPaise(computed.line_total_paise) : ''}</output>
+                  </Cell>
+                  <div className="col-start-6 row-start-1 max-md:pt-6 md:col-start-5 lg:col-start-6">
+                    {blank ? null : (
+                      <button type="button" aria-label={`Remove line ${i + 1}`} className="grid min-h-11.5 w-full cursor-pointer place-items-center rounded-lg text-muted hover:bg-warn-bg hover:text-warn" onClick={() => setForm((old) => ({ ...old, lines: f.withTrailingBlank(old.lines.filter((other_) => other_.key !== line.key), old.type) }))}>✕</button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </section>
 
-      <div data-place="packing" className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        {form.type === 'job_work' ? <Lots form={form} onChange={patchReturn} /> : null}
-        <section className="card grid content-start gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="Packing, delivery and payment">
-          <h2 className="text-lg font-bold sm:col-span-2 lg:col-span-3">Packing &amp; delivery</h2>
-          <Field label="Packing ₹" hint="Added to the bill"><input className="field num" inputMode="decimal" value={form.packing} onChange={(event) => patch({ packing: event.target.value })} /></Field>
-          <Field label="Freight ₹" hint={buyerPays ? 'On the challan only, not on the bill' : 'Added to the bill'}><input className="field num" inputMode="decimal" value={form.freight} onChange={(event) => patch({ freight: event.target.value })} /></Field>
-          <Field label="Who pays the freight">
-            <select className="field" value={form.freightPaidBy} onChange={(event) => patch({ freightPaidBy: event.target.value === 'buyer_to_pay' ? 'buyer_to_pay' : 'seller' })}>
-              <option value="seller">We pay, add to bill</option><option value="buyer_to_pay">Customer pays the driver</option>
-            </select>
-          </Field>
-          {buyerPays || form.freight.trim() === '' ? null : (
-            <label className="flex items-center gap-2"><input className="size-5" type="checkbox" checked={form.deliveryTaxable} onChange={(event) => patch({ deliveryTaxable: event.target.checked })} /> GST on freight</label>
-          )}
-          {mixedRates.length > 1 ? (
-            <Field label="GST on charges">
-              <select className="field" value={form.chargesRate} onChange={(event) => patch({ chargesRate: event.target.value })}>
-                <option value="">Highest on the bill</option>
-                {mixedRates.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
-              </select>
-            </Field>
-          ) : null}
-          <Field label="Received now ₹"><input className="field num" inputMode="decimal" value={form.paid} onChange={(event) => patch({ paid: event.target.value })} /></Field>
-          {form.paid.trim() === '' ? null : (
-            <Field label="Received by">
-              <select className="field" value={form.paidMode} onChange={(event) => patch({ paidMode: event.target.value })}>
-                <option value="cash">Cash</option><option value="upi">UPI</option><option value="bank_transfer">Bank transfer</option><option value="cheque">Cheque</option>
-              </select>
-            </Field>
-          )}
-          {showMore ? (
-            <>
-              <TransportFields value={f.transportOf(form)} onChange={(transport) => setForm((old) => f.changeTransport(old, transport))} />
-              <Field label="Note on bill" className="sm:col-span-2"><input className="field" maxLength={1000} value={form.notes} onChange={(event) => patch({ notes: event.target.value })} /></Field>
-            </>
-          ) : (
-            <button type="button" className="btn sm:col-span-2 lg:col-span-3" aria-expanded={false} onClick={() => setMoreOpen(true)}>More details: vehicle, driver, LR, dispatch, note</button>
-          )}
-        </section>
+          {form.type === 'job_work' ? <Lots form={form} onChange={patchReturn} /> : null}
 
-        <section className="card grid content-start gap-1" aria-label="Totals">
-          {amounts ? (
-            <>
-              <Sum label="Items and listed charges" paise={amounts.subtotal_paise} />
-              <Sum label="Taxable value" paise={amounts.taxable_value_paise} />
-              {amounts.igst_paise > 0 ? <Sum label="IGST" paise={amounts.igst_paise} /> : (
-                <><Sum label="CGST" paise={amounts.cgst_paise} /><Sum label="SGST" paise={amounts.sgst_paise} /></>
+          <section data-place="packing" className="px-5 pt-4.5 pb-5" aria-label="Packing and delivery">
+            <Step no={3}>Packing and delivery</Step>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Field label="Packing ₹" hint="Added to the bill"><input className="field num" inputMode="decimal" value={form.packing} onChange={(event) => patch({ packing: event.target.value })} /></Field>
+              <Field label="Freight ₹" hint={buyerPays ? 'On the challan only, not on the bill' : 'Added to the bill'}><input className="field num" inputMode="decimal" value={form.freight} onChange={(event) => patch({ freight: event.target.value })} /></Field>
+              <Field label="Who pays the freight">
+                <select className="field" value={form.freightPaidBy} onChange={(event) => patch({ freightPaidBy: event.target.value === 'buyer_to_pay' ? 'buyer_to_pay' : 'seller' })}>
+                  <option value="seller">We pay, add to bill</option><option value="buyer_to_pay">Customer pays the driver</option>
+                </select>
+              </Field>
+              {buyerPays || form.freight.trim() === '' ? null : (
+                <label className="flex items-center gap-2.5"><input className="size-5 accent-accent" type="checkbox" checked={form.deliveryTaxable} onChange={(event) => patch({ deliveryTaxable: event.target.checked })} /> GST on freight</label>
               )}
-              <Sum label="Round-off" paise={amounts.round_off_paise} />
-              {amounts.dc_to_pay_paise > 0 ? <Sum label="Customer pays the driver (not on this bill)" paise={amounts.dc_to_pay_paise} /> : null}
-            </>
-          ) : null}
-          {'problem' in preview ? <p className={amounts ? 'font-semibold text-warn' : 'text-muted'}>{preview.problem}</p> : null}
-        </section>
+              {mixedRates.length > 1 ? (
+                <Field label="GST on charges">
+                  <select className="field" value={form.chargesRate} onChange={(event) => patch({ chargesRate: event.target.value })}>
+                    <option value="">Highest on the bill</option>
+                    {mixedRates.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
+                  </select>
+                </Field>
+              ) : null}
+              {showMore ? (
+                <>
+                  <TransportFields value={f.transportOf(form)} onChange={(transport) => setForm((old) => f.changeTransport(old, transport))} />
+                  <Field label="Note on bill" className="sm:col-span-2"><input className="field" maxLength={1000} value={form.notes} onChange={(event) => patch({ notes: event.target.value })} /></Field>
+                </>
+              ) : (
+                <button type="button" className="btn sm:col-span-2 lg:col-span-3" aria-expanded={false} onClick={() => setMoreOpen(true)}>Vehicle, driver, LR, note</button>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <aside className="card bill-total overflow-hidden bg-sunken p-0" aria-label="Total">
+          <div className="border-b border-line bg-card px-5 pt-4 pb-4.5">
+            <p className="small-head">Bill total</p>
+            <output aria-label="Bill total" aria-live="polite" className="mt-1 mb-0.5 block text-[36px] leading-tight font-semibold wrap-anywhere" style={{ fontFamily: 'var(--font-display)' }}>{amounts ? formatInr(amounts.grand_total_paise) : '₹ —'}</output>
+            <p className="text-[13.5px] text-muted">{amounts ? rupeesInWords(amounts.grand_total_paise) : 'problem' in preview ? preview.problem : ''}</p>
+          </div>
+          <div className="grid gap-3.5 p-5">
+            {amounts ? (
+              <div className="grid gap-1.5 text-[15.5px]">
+                <Sum label="Items" paise={amounts.subtotal_paise} />
+                {amounts.taxable_value_paise === amounts.subtotal_paise ? null : <Sum label="With charges" paise={amounts.taxable_value_paise} />}
+                {amounts.igst_paise > 0 ? <Sum label="IGST" paise={amounts.igst_paise} /> : <><Sum label="CGST" paise={amounts.cgst_paise} /><Sum label="SGST" paise={amounts.sgst_paise} /></>}
+                {amounts.round_off_paise === 0 ? null : <Sum label="Round-off" paise={amounts.round_off_paise} />}
+                {amounts.dc_to_pay_paise > 0 ? <Sum label="Customer pays the driver" paise={amounts.dc_to_pay_paise} /> : null}
+              </div>
+            ) : null}
+            {amounts && 'problem' in preview ? <p className="font-semibold text-warn">{preview.problem}</p> : null}
+            {glance && decimalToPaise(glance.balance) > 0 ? (
+              <p className="flex items-center gap-2 rounded-[3px] border-l-[3px] border-due bg-due-bg px-3 py-2 text-sm font-semibold text-due"><Icon name="clock" className="size-[18px]" />Old balance of this customer {formatRupees(decimalToPaise(glance.balance))}</p>
+            ) : null}
+            <div className="flex items-end gap-2">
+              <Field label="Received now ₹" className="flex-1"><input className="field num" inputMode="decimal" value={form.paid} onChange={(event) => patch({ paid: event.target.value })} /></Field>
+              {form.paid.trim() === '' ? null : (
+                <select aria-label="How it came" className="field w-auto" value={form.paidMode} onChange={(event) => patch({ paidMode: event.target.value })}>
+                  <option value="cash">Cash</option><option value="upi">UPI</option><option value="bank_transfer">Bank</option><option value="cheque">Cheque</option>
+                </select>
+              )}
+            </div>
+            {error ? <Notice tone="warn">{error}</Notice> : null}
+            <button className="btn btn-primary min-h-13 max-lg:hidden" type="submit" disabled={busy}>{busy ? 'Saving…' : <>Save bill<kbd className="kbd">Ctrl Enter</kbd></>}</button>
+            <button className="more-link mx-auto cursor-pointer py-1 text-muted hover:text-warn" type="button" onClick={clear}>Clear</button>
+          </div>
+        </aside>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-card">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-3 py-3">
-          <output aria-label="Invoice total" aria-live="polite" className="text-3xl font-bold tabular-nums">{amounts ? formatInr(amounts.grand_total_paise) : '₹ —'}</output>
-          <div className={`min-w-0 flex-1 ${error ? 'max-sm:order-first max-sm:basis-full' : ''}`}>{error ? <Notice tone="warn">{error}</Notice> : null}</div>
-          <button className="btn ml-auto" type="button" onClick={clear}>Clear</button>
-          <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'Saving…' : <>Save bill<span className="hidden whitespace-pre sm:inline"> (Ctrl+Enter)</span></>}</button>
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-card px-4 py-2.5 side:px-7 lg:hidden">
+        {error ? <div className="mb-2"><Notice tone="warn">{error}</Notice></div> : null}
+        <div className="flex items-center gap-3">
+          <b className="min-w-0 flex-1 text-[26px] leading-tight font-semibold wrap-anywhere" style={{ fontFamily: 'var(--font-display)' }}>{amounts ? formatInr(amounts.grand_total_paise) : '₹ —'}</b>
+          <button className="btn btn-primary min-h-12 px-6" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save bill'}</button>
         </div>
       </div>
     </form>
+  );
+}
+
+const LINE_COLUMNS = 'lg:grid-cols-[minmax(0,1fr)_5.2rem_4.4rem_6rem_6.6rem_2.2rem]';
+
+function Step({ no, done = false, note, children }: { no: number; done?: boolean; note?: string; children: ReactNode }) {
+  return (
+    <div className="mb-2.5 flex items-center gap-2.5">
+      <span aria-hidden className={`grid size-6.5 flex-none place-items-center rounded-full border text-[12.5px] font-bold ${done ? 'border-slate bg-slate text-white' : 'border-slate text-slate'}`}>{done ? '✓' : no}</span>
+      <h2 className="card-title text-[19px]">{children}</h2>
+      {note ? <small className="ml-auto text-[13.5px] text-muted max-side:hidden">{note}</small> : null}
+    </div>
   );
 }
 
@@ -749,7 +794,7 @@ function AddressBox({ customer, engine, onSaved }: { customer: Customer; engine:
 
   return (
     <div
-      className="col-span-2 flex flex-wrap items-end gap-2 lg:col-span-5"
+      className="mt-3 flex flex-wrap items-end gap-2"
       onKeyDown={(event) => {
         if (event.key !== 'Enter' || event.shiftKey) return;
         event.preventDefault();
@@ -765,11 +810,11 @@ function AddressBox({ customer, engine, onSaved }: { customer: Customer; engine:
   );
 }
 
-/** A named box of a bill line. On a wide screen the lines align, so the names stand once, above the first. */
-function Cell({ name, first, box, className = 'col-span-2 md:col-span-1', children }: { name: string; first: boolean; box?: f.LineBox; className?: string; children: ReactNode }) {
+/** A named box of a bill line. On a wide screen the names stand once, above the first line. */
+function Cell({ name, box, className = '', children }: { name: string; box?: f.LineBox; className?: string; children: ReactNode }) {
   return (
-    <div className={className} data-box={box}>
-      <span aria-hidden className={`mb-1 block text-sm font-semibold ${first ? '' : 'xl:hidden'}`}>{name}</span>
+    <div className={`min-w-0 ${className}`} data-box={box}>
+      <span aria-hidden className="mb-1 block text-[13px] font-semibold text-muted lg:hidden">{name}</span>
       {children}
     </div>
   );
@@ -782,10 +827,10 @@ function Sum({ label, paise }: { label: string; paise: number }) {
 function Lots({ form, onChange }: { form: f.BillForm; onChange: (lotId: string, change: Partial<f.FormReturn>) => void }) {
   if (!form.customer) return null;
   return (
-    <section className="card grid gap-3 lg:col-span-2" aria-label="Customer material going back">
-      <h2 className="text-lg font-bold">Material going back</h2>
+    <section className="grid gap-3 px-4.5 pt-4 pb-4.5" aria-label="Customer material going back">
+      <h2 className="card-title text-base">Material going back</h2>
       {form.lots.length === 0 ? (
-        <p className="text-muted">No open lots for this customer. <Link className="underline" href="/job-work">Receive material</Link></p>
+        <p className="text-muted">No material of this customer is here. <Link className="underline" href="/job-work?new">Material came in</Link></p>
       ) : null}
       {form.lots.map((lot) => {
         const entry = form.returns[lot.id] ?? f.blankReturn;

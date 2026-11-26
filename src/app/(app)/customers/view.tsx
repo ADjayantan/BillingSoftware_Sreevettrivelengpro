@@ -1,45 +1,90 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { enterAdvances } from '@/components/enter-advance';
 import { Field, Notice } from '@/components/field';
+import { Icon } from '@/components/icon';
 import { useAltN } from '@/components/use-alt-n';
 import { api } from '@/lib/api-client';
-import { GST_STATES, isValidGstin, stateLabel } from '@/lib/india';
-import { decimalToPaise, formatInr } from '@/lib/money';
+import { GST_STATES, daysBetween, isValidGstin, stateLabel } from '@/lib/india';
+import { initials } from '@/lib/look';
+import { decimalToPaise, formatRupees } from '@/lib/money';
+import type { CustomerBalance } from '@/lib/schemas/home';
 import type { Customer } from '@/lib/schemas/masters';
 
-export function CustomersView({ rows, search }: { rows: Customer[]; search: ReactNode }) {
-  const [editing, setEditing] = useState<Customer | 'new' | null>(null);
+const rupees = (decimal: string): string => formatRupees(Math.abs(decimalToPaise(decimal)));
+
+/** What a customer owes: on bills, of which late, and with the dues from before. A minus is what we owe them. */
+function Balance({ row, today }: { row: CustomerBalance; today: string }) {
+  const balance = decimalToPaise(row.balance);
+  const before = decimalToPaise(row.opening_balance);
+  const late = decimalToPaise(row.overdue);
+  const href = `/invoices?customer=${row.id}${row.bills > 0 ? '&show=open' : ''}`;
+  return (
+    <Link href={href} prefetch={false} className="block hover:underline">
+      <b className={`block font-semibold whitespace-nowrap ${balance === 0 ? 'font-normal text-muted' : ''}`}>{balance === 0 ? '—' : rupees(row.balance)}</b>
+      {balance < 0 ? <small className="block text-[13px] text-paid">we owe them</small> : null}
+      {before > 0 ? <small className="block text-[13px] text-muted">{decimalToPaise(row.on_bills) === 0 ? 'from before' : `${rupees(row.opening_balance)} of it from before`}</small> : null}
+      {before < 0 && balance > 0 ? <small className="block text-[13px] text-muted">less {rupees(row.opening_balance)} we owe them</small> : null}
+      {late > 0 ? <small className="block text-[13px] font-semibold text-warn lg:hidden">{rupees(row.overdue)} late</small> : null}
+      {late > 0 && row.oldest ? <small className="block text-[13px] text-warn max-lg:hidden">oldest {daysBetween(row.oldest, today)} days</small> : null}
+    </Link>
+  );
+}
+
+export function CustomersView({ rows, today, search, order, pager, openNew }: {
+  rows: CustomerBalance[];
+  today: string;
+  search: ReactNode;
+  /** By name, or who owes most first. */
+  order: ReactNode;
+  pager: ReactNode;
+  openNew: boolean;
+}) {
+  const [editing, setEditing] = useState<Customer | 'new' | null>(openNew ? 'new' : null);
   useAltN(() => setEditing('new'));
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-start gap-3">
-        <div className="min-w-64 flex-1">{search}</div>
-        <button className="btn btn-primary" type="button" onClick={() => setEditing('new')}>New customer (Alt+N)</button>
-      </div>
       {editing ? <CustomerForm key={editing === 'new' ? 'new' : editing.id} customer={editing === 'new' ? null : editing} onClose={() => setEditing(null)} /> : null}
-      <div className="card overflow-x-auto p-0">
+      <section className="card overflow-hidden p-0" aria-label="Customers">
+        <div className="flex flex-wrap gap-2 p-3">
+          <div className="flex min-w-60 flex-1">{search}</div>
+          {order}
+          <button className="btn btn-primary" type="button" onClick={() => setEditing('new')}><Icon name="plus" />New customer<kbd className="kbd" data-alt-n>Alt N</kbd></button>
+        </div>
+        <div className="relative overflow-x-auto">
         <table className="grid-table">
-          <thead><tr><th>Name</th><th>GSTIN</th><th>State</th><th className="num">Credit days</th><th className="num">Opening balance</th></tr></thead>
+          <thead className="max-lg:sr-only"><tr><th>Customer</th><th>GSTIN</th><th className="num">Bills to collect</th><th className="num">Late</th><th className="num">Balance</th></tr></thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.id} className={row.is_active ? '' : 'opacity-60'}>
                 <td>
-                  <button type="button" className="cursor-pointer text-left font-semibold text-accent underline" onClick={() => setEditing(row)}>{row.name}</button>
-                  {row.is_active ? null : <span className="ml-2 text-sm">inactive</span>}
+                  <span className="flex items-center gap-3">
+                    <span className="face max-side:hidden" aria-hidden>{initials(row.name)}</span>
+                    <span className="min-w-0">
+                      <button type="button" className="row-link wrap-anywhere" onClick={() => setEditing(row)}>{row.name}</button>
+                      <small className="block text-[13px] text-muted">
+                        {[row.phone, row.is_active ? null : 'not in use'].filter(Boolean).join(' · ')}
+                        <span className="max-lg:hidden">{row.phone ? ' · ' : ''}{stateLabel(row.state_code)} · {row.credit_days} days credit</span>
+                        <span className="block lg:hidden">{row.gstin ?? 'No GSTIN'}</span>
+                      </small>
+                    </span>
+                  </span>
                 </td>
-                <td>{row.gstin ?? 'Unregistered'}{row.is_sez ? <span className="ml-2 rounded border border-line px-1 text-sm">SEZ</span> : null}</td>
-                <td>{stateLabel(row.state_code)}</td>
-                <td className="num">{row.credit_days}</td>
-                <td className="num">{formatInr(decimalToPaise(row.opening_balance))}</td>
+                <td className="whitespace-nowrap max-lg:hidden">{row.gstin ?? <span className="text-muted">No GSTIN</span>}{row.is_sez ? <span className="ml-2 rounded-[2px] border border-line-2 px-1 text-sm">SEZ</span> : null}</td>
+                <td className="num whitespace-nowrap max-lg:hidden">{row.bills === 0 ? <span className="text-muted">—</span> : <Link href={`/invoices?customer=${row.id}&show=open`} prefetch={false} className="row-link font-normal">{row.bills} bill{row.bills === 1 ? '' : 's'}</Link>}</td>
+                <td className="num whitespace-nowrap max-lg:hidden">{decimalToPaise(row.overdue) === 0 ? <span className="text-muted">—</span> : <b className="font-semibold text-warn">{rupees(row.overdue)}</b>}</td>
+                <td className="num max-lg:text-right"><Balance row={row} today={today} /></td>
               </tr>
             ))}
-            {rows.length === 0 ? <tr><td colSpan={5} className="text-muted">No customers here yet.</td></tr> : null}
+            {rows.length === 0 ? <tr><td colSpan={5} className="py-8 text-center text-muted">No customers here yet.</td></tr> : null}
           </tbody>
         </table>
-      </div>
+        </div>
+        {pager}
+      </section>
     </>
   );
 }
@@ -83,9 +128,9 @@ function CustomerForm({ customer, onClose }: { customer: Customer | null; onClos
   }
 
   return (
-    <form onSubmit={save} onKeyDown={enterAdvances} className="card mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label={customer ? 'Edit customer' : 'New customer'}>
-      <Field label="Name" className="lg:col-span-2"><input className="field" name="name" defaultValue={customer?.name} required maxLength={120} autoFocus /></Field>
-      <Field label="GSTIN" error={gstinProblem} hint={gstin.length === 15 ? 'Valid' : 'Leave empty if unregistered'}>
+    <form onSubmit={save} onKeyDown={enterAdvances} className="card mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label={customer ? 'Edit customer' : 'New customer'}>
+      <Field label="Name" className="xl:col-span-2"><input className="field" name="name" defaultValue={customer?.name} required maxLength={120} autoFocus /></Field>
+      <Field label="GSTIN" error={gstinProblem} hint={gstin.length === 15 ? 'Correct' : 'Leave empty if there is none'}>
         <input
           className="field uppercase"
           value={gstin}
@@ -110,11 +155,11 @@ function CustomerForm({ customer, onClose }: { customer: Customer | null; onClos
       <Field label="Opening balance ₹" hint="Minus if we owe them"><input className="field num" name="opening_balance" inputMode="decimal" defaultValue={customer?.opening_balance ?? '0'} /></Field>
       <div className="flex flex-col justify-center gap-2">
         <label className="flex items-center gap-2"><input className="size-5" type="checkbox" name="is_sez" defaultChecked={customer?.is_sez} /> SEZ unit (IGST)</label>
-        <label className="flex items-center gap-2"><input className="size-5" type="checkbox" name="is_active" defaultChecked={customer?.is_active ?? true} /> Active</label>
+        <label className="flex items-center gap-2"><input className="size-5" type="checkbox" name="is_active" defaultChecked={customer?.is_active ?? true} /> In use</label>
       </div>
-      <Field label="Address" className="sm:col-span-2 lg:col-span-4"><textarea className="field" name="address" rows={2} maxLength={500} defaultValue={customer?.address ?? ''} /></Field>
-      {error ? <div className="sm:col-span-2 lg:col-span-4"><Notice tone="warn">{error}</Notice></div> : null}
-      <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-4">
+      <Field label="Address" className="sm:col-span-2 xl:col-span-4"><textarea className="field" name="address" rows={2} maxLength={500} defaultValue={customer?.address ?? ''} /></Field>
+      {error ? <div className="sm:col-span-2 xl:col-span-4"><Notice tone="warn">{error}</Notice></div> : null}
+      <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-4">
         <button className="btn btn-primary" type="submit" disabled={busy || gstinProblem !== null}>Save customer</button>
         <button className="btn" type="button" onClick={onClose}>Close</button>
         {customer ? <button className="btn ml-auto text-warn" type="button" disabled={busy} onClick={remove}>Delete</button> : null}

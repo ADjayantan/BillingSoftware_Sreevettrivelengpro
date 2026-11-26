@@ -106,15 +106,15 @@ export function NewCustomer({ value, engine, onChange, onUse, onCancel }: {
 
   const wrongAt = (field: c.CustomerField): string | null => (problem?.field === field ? problem.message : null);
   const address = (
-    <Field label={value.registered ? 'Address' : 'Address, if you have it'} error={wrongAt('address')} className="sm:col-span-2 lg:col-span-4">
+    <Field label={value.registered ? 'Address' : 'Address, if you have it'} error={wrongAt('address')} className="sm:col-span-2">
       <textarea data-field="address" className="field" rows={2} maxLength={500} autoComplete="off" value={value.address} onChange={(event) => set({ address: event.target.value })} />
     </Field>
   );
 
   return (
-    <section ref={box} aria-label="New customer" onKeyDown={onKeyDown} className="card grid gap-3 border-accent sm:grid-cols-2 lg:grid-cols-4">
-      <div className="flex flex-wrap items-center gap-3 sm:col-span-2 lg:col-span-4">
-        <h2 className="text-lg font-bold">New customer</h2>
+    <section ref={box} aria-label="New customer" onKeyDown={onKeyDown} className="card grid gap-3 border-accent sm:grid-cols-2">
+      <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+        <h2 className="card-title">New customer</h2>
         <div className="flex gap-1" role="group" aria-label="GST registration">
           {([[false, 'No GSTIN'], [true, 'Has GSTIN']] as const).map(([registered, label]) => (
             <button
@@ -129,7 +129,7 @@ export function NewCustomer({ value, engine, onChange, onUse, onCancel }: {
           ))}
         </div>
       </div>
-      <Field label="Name" error={wrongAt('name')} className="lg:col-span-2">
+      <Field label="Name" error={wrongAt('name')} className="sm:col-span-2">
         <input data-field="name" className="field" maxLength={120} autoComplete="off" value={value.name} onChange={(event) => set({ name: event.target.value })} />
       </Field>
       {value.registered ? (
@@ -162,7 +162,7 @@ export function NewCustomer({ value, engine, onChange, onUse, onCancel }: {
         </>
       ) : null}
       {match ? (
-        <div className="sm:col-span-2 lg:col-span-4">
+        <div className="sm:col-span-2">
           <CustomerChoice
             name={value.name} reason={match.reason} candidates={match.candidates} takeFocus={match.asked}
             onUse={async (customer) => {
@@ -181,9 +181,9 @@ export function NewCustomer({ value, engine, onChange, onUse, onCancel }: {
           />
         </div>
       ) : null}
-      {problem?.field === null ? <div className="sm:col-span-2 lg:col-span-4"><Notice tone="warn">{problem.message}</Notice></div> : null}
-      <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-4">
-        <button data-save type="button" className="btn btn-primary" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save & use in this bill'}</button>
+      {problem?.field === null ? <div className="sm:col-span-2"><Notice tone="warn">{problem.message}</Notice></div> : null}
+      <div className="flex flex-wrap gap-2 sm:col-span-2">
+        <button data-save type="button" className="btn btn-primary" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save and use in this bill'}</button>
         <button type="button" className="btn" aria-expanded={value.more} onClick={() => set({ more: !value.more })}>{value.more ? 'Fewer details' : 'More details'}</button>
         <button type="button" className="btn" onClick={onCancel}>Cancel</button>
       </div>

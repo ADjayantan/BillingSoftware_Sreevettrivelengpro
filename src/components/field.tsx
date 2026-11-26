@@ -8,8 +8,8 @@ export function Field({ label, hint, error, children, className = '' }: {
   className?: string;
 }) {
   return (
-    <label className={`block ${className}`}>
-      <span className="mb-1 block text-sm font-semibold">{label}</span>
+    <label className={`block min-w-0 ${className}`}>
+      <span className="mb-1 block text-[13.5px] text-ink-2">{label}</span>
       {children}
       {error ? (
         <span role="alert" className="mt-1 block text-sm font-semibold text-warn">{error}</span>
@@ -24,7 +24,7 @@ export function Notice({ tone = 'info', children }: { tone?: 'info' | 'warn'; ch
   return (
     <p
       role={tone === 'warn' ? 'alert' : 'status'}
-      className={`rounded-md border px-3 py-2 font-semibold ${tone === 'warn' ? 'border-warn bg-warn-bg text-warn' : 'border-accent text-accent'}`}
+      className={`rounded-[3px] border-l-[3px] px-3.5 py-2.5 ${tone === 'warn' ? 'border-warn bg-warn-bg text-warn' : 'border-paid bg-paid-bg text-paid'}`}
     >
       {children}
     </p>

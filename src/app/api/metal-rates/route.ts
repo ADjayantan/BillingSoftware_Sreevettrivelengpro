@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { processDealerMetalRateMessage } from '@/app/api/cron/metal-rates/route';
-import { body, must, route } from '@/lib/api/http';
+import { body, route } from '@/lib/api/http';
+import { alertRules, latestRates } from '@/lib/data';
 
 const PasteDealerMessageSchema = z.object({
   raw_message: z.string().trim().min(1, 'Paste the dealer rate message').max(4000),
@@ -11,19 +12,8 @@ const PasteDealerMessageSchema = z.object({
 });
 
 export const GET = route(async ({ supabase }) => {
-  const ratesRes = await supabase
-    .from('latest_metal_rates')
-    .select('id, material_grade, rate_per_kg, previous_rate_per_kg, change_delta, source, recorded_at')
-    .order('material_grade');
-  const rulesRes = await supabase
-    .from('alert_rules')
-    .select('id, material_grade, threshold_rs_per_kg, telegram_chat_id, is_active')
-    .order('material_grade');
-
-  return {
-    rates: must(ratesRes),
-    rules: must(rulesRes),
-  };
+  const [rates, rules] = await Promise.all([latestRates(supabase), alertRules(supabase)]);
+  return { rates, rules };
 });
 
 export const POST = route(async ({ request, supabase }) => {

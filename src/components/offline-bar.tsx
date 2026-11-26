@@ -6,23 +6,24 @@ import { formatTime } from '@/lib/india';
 import { decimalToPaise, formatInr } from '@/lib/money';
 import { offlineEngine, type OfflineEngine } from '@/lib/offline';
 import type { DraftRecord, NewCustomerRecord, QueueRecord, QueueSummary } from '@/lib/offline-db';
+import { setQueueNote } from '@/lib/queue-note';
 import { startServiceWorker } from '@/lib/service-worker';
 import { CustomerChoice } from './customer-choice';
 import { useConnection } from './use-connection';
 
 const STATUS: Record<QueueRecord['status'], string> = {
-  pending: 'Saved on this device, waiting to be issued', synced: 'Invoice issued', conflict: 'Already issued: do not bill again', rejected: 'Needs a correction', review: 'Which customer?',
+  pending: 'Saved on this device, waiting to go', synced: 'Bill number given', conflict: 'Already issued: do not bill it again', rejected: 'Needs a correction', review: 'Which customer?',
 };
 
 /** One bill of the list: a row on a wide screen, a small card on a phone. */
 function Entry({ bill, customer, total, action, children }: { bill: ReactNode; customer: string; total?: string; action?: ReactNode; children: ReactNode }) {
   return (
-    <li className="grid grid-cols-[1fr_auto] items-start gap-x-4 gap-y-1 border-b border-line py-2 last:border-0 md:grid-cols-[10rem_minmax(0,1fr)_8rem_minmax(0,2fr)_auto]">
+    <li className="grid grid-cols-[1fr_auto] items-start gap-x-4 gap-y-1 border-b border-line py-2 last:border-0 lg:grid-cols-[10rem_minmax(0,1fr)_8rem_minmax(0,2fr)_auto]">
       <span className="text-muted">{bill}</span>
-      <span className="order-first col-span-2 font-semibold md:order-none md:col-span-1">{customer}</span>
+      <span className="order-first col-span-2 font-semibold lg:order-none lg:col-span-1">{customer}</span>
       <span className="num">{total ?? ''}</span>
-      <div className="col-span-2 md:col-span-1">{children}</div>
-      <span className="col-span-2 flex gap-2 md:col-span-1 md:justify-end">{action}</span>
+      <div className="col-span-2 lg:col-span-1">{children}</div>
+      <span className="col-span-2 flex gap-2 lg:col-span-1 lg:justify-end">{action}</span>
     </li>
   );
 }
@@ -55,7 +56,11 @@ export function OfflineBar() {
       if (left) return;
       if (loaded) {
         setEngine(loaded);
-        stops = [loaded.start(), loaded.watchQueue(setQueue), loaded.watchDrafts(setDrafts)];
+        const tell = (next: QueueSummary): void => {
+          setQueue(next);
+          setQueueNote(next);
+        };
+        stops = [loaded.start(), loaded.watchQueue(tell), loaded.watchDrafts(setDrafts)];
       }
       void startServiceWorker();
     });
@@ -85,25 +90,25 @@ export function OfflineBar() {
   }
 
   return (
-    <aside aria-label="Sync status" className="sticky top-0 z-20 border-b border-line bg-card print:hidden">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2" role="status">
-        {connection === 'offline' ? <span className="font-semibold">● Offline Mode<span className="font-normal text-muted"> · bills are kept on this device</span></span> : null}
+    <aside aria-label="Bills on this device" className="device-bar sticky top-0 z-20 border-b border-line bg-due-bg side:top-[48px] print:hidden">
+      <div className="mx-auto flex max-w-[1300px] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2 side:px-7" role="status">
+        {connection === 'offline' ? <span className="font-semibold text-due">No internet<span className="font-normal"> · bills are kept on this device</span></span> : null}
         {connection === 'signed_out' ? <span className="font-semibold text-warn">Signed out · <Link className="underline" href="/login?next=/billing">Sign in</Link></span> : null}
-        {queue.pending > 0 ? <span className="font-semibold">Pending Sync ({queue.pending})</span> : null}
-        {queue.attention > 0 ? <span className="font-semibold text-warn">{queue.attention} need{queue.attention === 1 ? 's' : ''} attention</span> : null}
-        {note ? <span className="text-muted">{note}</span> : null}
+        {queue.pending > 0 ? <span className="font-semibold text-due">{queue.pending} bill{queue.pending === 1 ? '' : 's'} waiting to go</span> : null}
+        {queue.attention > 0 ? <span className="font-semibold text-warn">{queue.attention} need{queue.attention === 1 ? 's' : ''} you</span> : null}
+        {note ? <span className="text-ink-2">{note}</span> : null}
         <span className="ml-auto flex gap-2">
-          {queue.pending > 0 ? <button type="button" className="btn min-h-10 py-1" disabled={busy} onClick={() => void sync()}>{busy ? 'Syncing…' : 'Sync Now'}</button> : null}
-          <button type="button" className="btn min-h-10 py-1" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Show bills'}</button>
+          {queue.pending > 0 ? <button type="button" className="btn btn-small" disabled={busy} onClick={() => void sync()}>{busy ? 'Sending…' : 'Send now'}</button> : null}
+          <button type="button" className="btn btn-small" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Show bills'}</button>
         </span>
       </div>
       {open ? (
-        <div className="mx-auto max-h-[60vh] max-w-7xl overflow-auto px-3 pb-3">
+        <div className="mx-auto max-h-[60vh] max-w-[1300px] overflow-auto bg-card px-4 py-2 side:px-7">
           <ul>
             {queue.reviews.filter((one) => !queue.items.some((item) => item.status === 'review' && item.draft?.customer_id === one.id)).map((one) => (
               <Entry
                 key={one.id} bill={formatTime(one.created_at)} customer={one.form.name}
-                action={drafts.some(({ form }) => form.customer?.id === one.id || form.newCustomer?.id === one.id) ? null : <button type="button" className="btn min-h-10 py-1" onClick={() => void engine?.dropNewCustomer(one.id)}>Remove</button>}
+                action={drafts.some(({ form }) => form.customer?.id === one.id || form.newCustomer?.id === one.id) ? null : <button type="button" className="btn btn-small" onClick={() => void engine?.dropNewCustomer(one.id)}>Remove</button>}
               >
                 <div className="text-warn"><span className="font-semibold">New customer: not in the books yet</span><Which customer={one} engine={engine} /></div>
               </Entry>
@@ -113,8 +118,8 @@ export function OfflineBar() {
                 key={item.seq} customer={item.customer} total={formatInr(item.total_paise)}
                 bill={item.issued ? <Link className="font-semibold text-accent underline" href={`/invoices/${item.issued.invoice_id}`}>{item.issued.invoice_no}</Link> : formatTime(item.created_at)}
                 action={<>
-                  {engine?.isReopenable(item) ? <button type="button" className="btn min-h-10 py-1" onClick={() => void edit(item, true)}>Edit</button> : null}
-                  {item.status === 'synced' || item.status === 'conflict' ? <button type="button" className="btn min-h-10 py-1" onClick={() => void engine?.dismiss(item.temp_id)}>Dismiss</button> : null}
+                  {engine?.isReopenable(item) ? <button type="button" className="btn btn-small" onClick={() => void edit(item, true)}>Edit</button> : null}
+                  {item.status === 'synced' || item.status === 'conflict' ? <button type="button" className="btn btn-small" onClick={() => void engine?.dismiss(item.temp_id)}>Dismiss</button> : null}
                 </>}
               >
                 <div className={item.status === 'conflict' || item.status === 'rejected' || item.status === 'review' ? 'text-warn' : ''}>
@@ -128,7 +133,7 @@ export function OfflineBar() {
             {drafts.map((draft) => (
               <Entry
                 key={draft.temp_id} bill={formatTime(draft.updated_at)} customer={draft.form.customerText || 'No customer yet'}
-                action={<button type="button" className="btn min-h-10 py-1" onClick={() => void edit(draft, false)}>Open</button>}
+                action={<button type="button" className="btn btn-small" onClick={() => void edit(draft, false)}>Open</button>}
               >
                 Still being typed
               </Entry>

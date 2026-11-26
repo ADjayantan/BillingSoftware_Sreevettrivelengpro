@@ -73,6 +73,13 @@ const metalRateFixture = JSON.parse(
   }>;
 };
 
+/** The samples were supplied in Tanglish; the owner wants English in the software (25 Nov 2026). The rest is compared as supplied. */
+const ENGLISH: readonly (readonly [string, string])[] = [
+  ['Rod rate yeriduchu', 'Rod rate went up'], ['Rod rate kurainjirukku', 'Rod rate went down'], ['Rod rate maariyirukku', 'Rod rate changed'],
+  ['Pudhu quotation-ku indha rate-a paathukkonga.', 'Check this rate before you quote.'],
+];
+const inEnglish = (text: string | null): string | null => (text === null ? null : ENGLISH.reduce((all, [from, to]) => all.replace(from, to), text));
+
 const seedData = JSON.parse(
   readFileSync(new URL('../specs/seed-data.json', import.meta.url), 'utf8'),
 ) as {
@@ -472,11 +479,11 @@ describe('Task A · 3. Metal Rates Cron & Spike Alerts (MR-01–MR-10 from specs
       expect(result.parsed_json).toEqual(sample.expected_parsed_json);
       expect(result.normalized_rates).toEqual(sample.expected_normalized_rates);
       expect(result.should_notify).toBe(sample.should_notify);
-      expect(result.telegram_text).toBe(sample.expected_telegram_text);
+      expect(result.telegram_text).toBe(inEnglish(sample.expected_telegram_text));
 
       if (sample.should_notify) {
         expect(sentMessages).toHaveLength(1);
-        expect(sentMessages[0]?.text).toBe(sample.expected_telegram_text);
+        expect(sentMessages[0]?.text).toBe(inEnglish(sample.expected_telegram_text));
       } else {
         expect(sentMessages).toHaveLength(0);
       }

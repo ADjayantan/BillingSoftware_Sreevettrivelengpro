@@ -48,7 +48,7 @@ export function CustomerChoice({ name, reason, candidates, message, takeFocus = 
 
   const [first] = candidates;
   return (
-    <div className="grid gap-2 rounded-md border border-warn bg-warn-bg p-3 text-left">
+    <div className="grid gap-2 rounded-[3px] border-l-[3px] border-warn bg-warn-bg p-3.5 text-left">
       <p ref={heading} tabIndex={-1} role="alert" className="font-semibold text-warn">
         {reason === 'gstin' && first ? `This GSTIN is already ${first.name}` : reason === 'similar' ? `Is ${name || 'this'} one of your customers?` : (message ?? 'Check the customer')}
       </p>

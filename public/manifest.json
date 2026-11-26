@@ -3,12 +3,12 @@
   "name": "StudFlow",
   "short_name": "StudFlow",
   "description": "Billing and dispatch that keeps working when the internet does not",
-  "start_url": "/billing",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "lang": "en-IN",
-  "background_color": "#f5f6f4",
-  "theme_color": "#0b5d51",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
   "icons": [
     {
       "src": "/icon-192.png",
@@ -33,6 +33,10 @@
     {
       "name": "New bill",
       "url": "/billing"
+    },
+    {
+      "name": "Money received",
+      "url": "/money"
     }
   ]
 }

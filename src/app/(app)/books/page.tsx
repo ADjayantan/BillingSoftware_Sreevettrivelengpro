@@ -1,3 +1,4 @@
+import { PageHead } from '@/components/page-head';
 import { toApiError } from '@/lib/api/http';
 import { bookMonths } from '@/lib/data';
 import { isDriveConfigured } from '@/lib/drive-backup';
@@ -15,14 +16,11 @@ export default async function BooksPage() {
     });
   return (
     <>
-      <h1 className="mb-1 text-2xl font-bold">Excel books</h1>
+      <PageHead title="Excel books" note="One book for each month, by the date on the bill. Bills and receipts go in by themselves." />
       {months === null ? (
         <p className="card">Only the owner can open the Excel books. Every bill is in them by itself.</p>
       ) : (
-        <>
-          <p className="mb-3 text-muted">One book per month, by the date on the bill. Bills and receipts go in by themselves; there is nothing to save or export.</p>
-          <BooksView months={months} drive={isDriveConfigured()} now={new Date().toISOString()} />
-        </>
+        <BooksView months={months} drive={isDriveConfigured()} now={new Date().toISOString()} />
       )}
     </>
   );

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { enterAdvances } from '@/components/enter-advance';
 import { Field, Notice } from '@/components/field';
+import { Icon } from '@/components/icon';
 import { Typeahead } from '@/components/typeahead';
 import { useAltN } from '@/components/use-alt-n';
 import { api } from '@/lib/api-client';
@@ -11,24 +12,25 @@ import { searchCustomers } from '@/lib/master-search';
 import { formatDate, istDate } from '@/lib/india';
 import type { JobWorkLot } from '@/lib/schemas/masters';
 
-export function JobWorkView({ rows, search }: { rows: JobWorkLot[]; search: ReactNode }) {
-  const [editing, setEditing] = useState<JobWorkLot | 'new' | null>(null);
+export function JobWorkView({ rows, search, pager, openNew }: { rows: JobWorkLot[]; search: ReactNode; pager: ReactNode; openNew: boolean }) {
+  const [editing, setEditing] = useState<JobWorkLot | 'new' | null>(openNew ? 'new' : null);
   useAltN(() => setEditing('new'));
   return (
     <>
-      <div className="mb-3 flex flex-wrap items-start gap-3">
-        <div className="min-w-64 flex-1">{search}</div>
-        <button className="btn btn-primary" type="button" onClick={() => setEditing('new')}>Receive material (Alt+N)</button>
-      </div>
       {editing ? <LotForm key={editing === 'new' ? 'new' : editing.id} lot={editing === 'new' ? null : editing} onClose={() => setEditing(null)} /> : null}
-      <div className="card overflow-x-auto p-0">
+      <section className="card overflow-hidden p-0" aria-label="Customer material">
+        <div className="flex flex-wrap gap-2 p-3">
+          <div className="flex min-w-60 flex-1">{search}</div>
+          <button className="btn btn-primary" type="button" onClick={() => setEditing('new')}><Icon name="plus" />Material came in<kbd className="kbd" data-alt-n>Alt N</kbd></button>
+        </div>
+        <div className="relative overflow-x-auto">
         <table className="grid-table">
-          <thead><tr><th>Party DC</th><th>Date</th><th>Grade</th><th className="num">Inward kg</th><th className="num">Returned kg</th><th className="num">Scrap kg</th><th className="num">Balance kg</th><th>Status</th></tr></thead>
+          <thead><tr><th>Party DC</th><th>Date</th><th>Grade</th><th className="num">Came in kg</th><th className="num">Sent back kg</th><th className="num">Scrap kg</th><th className="num">Still here kg</th><th>State</th></tr></thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.id}>
-                <td><button type="button" className="cursor-pointer text-left font-semibold text-accent underline" onClick={() => setEditing(row)}>{row.party_dc_no}</button></td>
-                <td>{formatDate(row.party_dc_date)}</td>
+                <td><button type="button" className="row-link" onClick={() => setEditing(row)}>{row.party_dc_no}</button></td>
+                <td className="whitespace-nowrap">{formatDate(row.party_dc_date)}</td>
                 <td>{row.material_grade}</td>
                 <td className="num">{row.inward_weight_kg}</td>
                 <td className="num">{row.outward_weight_kg}</td>
@@ -37,10 +39,12 @@ export function JobWorkView({ rows, search }: { rows: JobWorkLot[]; search: Reac
                 <td>{row.status === 'open' ? 'Open' : `Closed${row.close_reason ? ` · ${row.close_reason}` : ''}`}</td>
               </tr>
             ))}
-            {rows.length === 0 ? <tr><td colSpan={8} className="text-muted">No customer material here yet.</td></tr> : null}
+            {rows.length === 0 ? <tr><td colSpan={8} className="py-8 text-center text-muted">No customer material here yet.</td></tr> : null}
           </tbody>
         </table>
-      </div>
+        </div>
+        {pager}
+      </section>
     </>
   );
 }
@@ -72,9 +76,9 @@ function LotForm({ lot, onClose }: { lot: JobWorkLot | null; onClose: () => void
   }
 
   return (
-    <form onSubmit={(event) => void save(event)} onKeyDown={enterAdvances} className="card mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label={lot ? 'Edit lot' : 'Receive material'}>
+    <form onSubmit={(event) => void save(event)} onKeyDown={enterAdvances} className="card mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label={lot ? 'Change material' : 'Material came in'}>
       {lot ? null : (
-        <Field label="Customer" className="lg:col-span-2">
+        <Field label="Customer" className="xl:col-span-2">
           <Typeahead inputLabel="Customer" autoFocus text={customerText} onText={(value) => { setCustomerText(value); setCustomerId(''); }} search={searchCustomers}
             onPick={(option) => { setCustomerText(option.label); setCustomerId(option.value.id); }} />
         </Field>
@@ -82,25 +86,25 @@ function LotForm({ lot, onClose }: { lot: JobWorkLot | null; onClose: () => void
       <Field label="Party DC number"><input className="field" name="party_dc_no" defaultValue={lot?.party_dc_no} required maxLength={40} /></Field>
       <Field label="Party DC date"><input className="field" name="party_dc_date" type="date" defaultValue={lot?.party_dc_date ?? istDate(new Date())} required /></Field>
       <Field label="Grade"><input className="field uppercase" name="material_grade" defaultValue={lot?.material_grade} required maxLength={30} /></Field>
-      <Field label="Inward kg"><input className="field num" name="inward" inputMode="decimal" defaultValue={lot?.inward_weight_kg} required /></Field>
+      <Field label="Came in kg"><input className="field num" name="inward" inputMode="decimal" defaultValue={lot?.inward_weight_kg} required /></Field>
       {lot ? (
         <>
-          <Field label="Returned kg" hint="Bills add to this"><input className="field num" name="outward" inputMode="decimal" defaultValue={lot.outward_weight_kg} /></Field>
+          <Field label="Sent back kg" hint="Bills add to this"><input className="field num" name="outward" inputMode="decimal" defaultValue={lot.outward_weight_kg} /></Field>
           <Field label="Scrap kg"><input className="field num" name="scrap" inputMode="decimal" defaultValue={lot.scrap_weight_kg} /></Field>
-          <Field label="Status">
+          <Field label="State">
             <select className="field" value={status} onChange={(event) => setStatus(event.target.value === 'closed' ? 'closed' : 'open')}>
               <option value="open">Open</option><option value="closed">Closed</option>
             </select>
           </Field>
           {status === 'closed' ? (
-            <Field label="Reason" hint="Needed if the balance is over 1% of inward"><input className="field" name="close_reason" defaultValue={lot.close_reason ?? ''} maxLength={300} /></Field>
+            <Field label="Reason" hint="Needed if more than 1% of what came in is left"><input className="field" name="close_reason" defaultValue={lot.close_reason ?? ''} maxLength={300} /></Field>
           ) : null}
         </>
       ) : null}
       <Field label="Material" className="sm:col-span-2"><input className="field" name="description" defaultValue={lot?.description ?? ''} maxLength={300} placeholder="12 mm rods, 3 m" /></Field>
-      {error ? <div className="sm:col-span-2 lg:col-span-4"><Notice tone="warn">{error}</Notice></div> : null}
-      <div className="flex gap-2 sm:col-span-2 lg:col-span-4">
-        <button className="btn btn-primary" type="submit" disabled={busy}>Save lot</button>
+      {error ? <div className="sm:col-span-2 xl:col-span-4"><Notice tone="warn">{error}</Notice></div> : null}
+      <div className="flex gap-2 sm:col-span-2 xl:col-span-4">
+        <button className="btn btn-primary" type="submit" disabled={busy}>Save</button>
         <button className="btn" type="button" onClick={onClose}>Close</button>
       </div>
     </form>

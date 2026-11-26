@@ -79,8 +79,8 @@ export function BooksView({ months, drive, now }: Books & { now: string }) {
     <div className="grid gap-4">
       {problem ? <Notice tone="warn">{problem}</Notice> : null}
       {byYear(books.months).map(([year, rows]) => (
-        <section key={year} className="card grid gap-3" aria-label={`Financial year ${year}`}>
-          <h2 className="text-lg font-bold">Financial year {year}</h2>
+        <section key={year} className="card grid gap-3" aria-label={`Year ${year}`}>
+          <h2 className="card-title">Year {year}</h2>
           {rows.map((row) => {
             const status = bookStatus(row, books.drive, clock);
             return (

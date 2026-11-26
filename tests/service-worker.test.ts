@@ -158,7 +158,8 @@ describe('service worker', () => {
 describe('manifest', () => {
   it('is installable: names, start page, and icons that exist at their size', () => {
     const manifest = JSON.parse(readFileSync('public/manifest.json', 'utf8')) as { start_url: string; display: string; icons: { src: string; sizes: string; purpose: string }[] };
-    expect(manifest).toMatchObject({ start_url: '/billing', display: 'standalone' });
+    // Home while the cloud answers; the worker and the proxy send '/' to billing when it does not.
+    expect(manifest).toMatchObject({ start_url: '/', display: 'standalone' });
     expect(manifest.icons.map((icon) => icon.sizes)).toEqual(expect.arrayContaining(['192x192', '512x512']));
     expect(manifest.icons.some((icon) => icon.purpose === 'maskable')).toBe(true);
     for (const icon of manifest.icons) {

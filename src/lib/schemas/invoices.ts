@@ -127,20 +127,6 @@ export const voidInput = z.object({ reason: z.string().trim().min(3, 'Give a sho
 export const deliveryUpdate = transport.partial().extend({ status: deliveryStatus.optional() });
 
 // ---- Rows -------------------------------------------------------------------
-export const invoiceListRow = z.object({
-  id: c.id,
-  invoice_no: z.string(),
-  bill_type: z.enum(['supply', 'job_work']),
-  invoice_date: z.string(),
-  due_date: z.string(),
-  grand_total: z.string(),
-  amount_paid: z.string(),
-  payment_status: z.enum(['unpaid', 'partial', 'paid']),
-  cancelled_at: z.string().nullable(),
-  customer_snapshot: z.looseObject({ name: z.string() }),
-});
-export type InvoiceListItem = z.infer<typeof invoiceListRow>;
-
 const party = z.object({
   name: z.string(),
   gstin: z.string().nullable(),

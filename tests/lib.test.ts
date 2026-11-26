@@ -3,7 +3,7 @@ import { calculateInvoiceDetail } from '@/lib/billing-math';
 import { addDays, daysBetween, formatDate, formatPhone, isMobile, istDate, isValidGstin, shortDate } from '@/lib/india';
 import { decimalToPaise, formatInr, paiseToDecimal, parseRupees, rupeesInWords, trimZeros } from '@/lib/money';
 import { parsePublicEnv } from '@/lib/schemas/public-env';
-import { invoiceSummaryText, reminderStage, reminderText, whatsappLink } from '@/lib/whatsapp';
+import { invoiceSummaryText, reminderStage, reminderText, whatsappDrafts, whatsappLink } from '@/lib/whatsapp';
 
 describe('money', () => {
   it.each([['104.25', 10425], ['0', 0], ['7', 700], ['1.5', 150], ['', null], ['1.005', null], ['-1', null], ['1e3', null], ['1,000', null], ['.5', null]])(
@@ -72,12 +72,12 @@ describe('WhatsApp', () => {
   it('uses a stage only on its exact day', () => {
     expect(['2026-12-22', '2026-12-23', '2026-12-24', '2026-12-30', '2027-01-07'].map((d) => reminderStage('2026-12-23', d))).toEqual([null, 'due', null, 'overdue_7', 'overdue_15']);
   });
-  it('fills the approved wording and encodes it once', () => {
-    const text = reminderText('due', 'tanglish', facts);
-    expect(text).toBe('Vanakkam Murugan & Co, Demo Studs-ilirundhu oru chinna reminder. Invoice INV/26-27/0001 (23 Nov 2026) ku ₹1,24,580.50 baaki irukku. Innaikku (23 Dec 2026) due. Payment anuppiyirundhaa, reference number share pannunga. Nandri!');
-    for (const stage of ['due', 'overdue_7', 'overdue_15'] as const) {
-      for (const language of ['tanglish', 'english'] as const) expect(reminderText(stage, language, facts)).not.toMatch(/\{\{|undefined/);
-    }
+  it('fills the approved wording, in English, and encodes it once', () => {
+    const text = reminderText('due', facts);
+    expect(text).toBe('Hello Murugan & Co, a friendly reminder from Demo Studs. The balance of ₹1,24,580.50 on invoice INV/26-27/0001 (23 Nov 2026) is due today, 23 Dec 2026. If you’ve already paid, please share the payment reference so we can update our records. Thank you.');
+    for (const stage of ['due', 'overdue_7', 'overdue_15'] as const) expect(reminderText(stage, facts)).not.toMatch(/\{\{|undefined|vanakkam|irukku|nandri/i);
+    for (const today of ['2026-12-01', '2026-12-23', '2026-12-30', '2027-01-07']) expect(whatsappDrafts('98765 43210', today, facts).map(({ label }) => label)).toEqual(['WhatsApp']);
+    expect(whatsappDrafts(null, '2026-12-23', facts)).toEqual([]);
     const link = new URL(whatsappLink('+91 90000 09101', text)!);
     expect(link.origin + link.pathname).toBe('https://wa.me/919000009101');
     expect(link.searchParams.get('text')).toBe(text);

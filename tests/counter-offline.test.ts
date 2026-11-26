@@ -488,7 +488,7 @@ describe('finding people', () => {
       wire = () => state;
       setConnection('online');
       for (const q of ['only here', '9000033333']) {
-        expect((await searchCustomers(q)).map((option) => [option.label, option.detail])).toEqual([['Only Here Party', 'Unregistered · Tamil Nadu (33) · new, saved on this device']]);
+        expect((await searchCustomers(q)).map((option) => [option.label, option.detail])).toEqual([['Only Here Party', 'No GSTIN · Tamil Nadu (33) · new, saved on this device']]);
       }
     }
     expect((await unsyncedCustomers(pc, 'only')).map((one) => one.name)).toEqual(['Only Here Party']);
@@ -496,7 +496,7 @@ describe('finding people', () => {
     await drain(pc);
     expect(await unsyncedCustomers(pc, 'only')).toEqual([]);
     expect((await cachedCustomers(pc, 'only here')).map((one) => one.name)).toEqual(['Only Here Party']);
-    expect((await searchCustomers('only here')).map((option) => option.detail)).toEqual(['Unregistered · Tamil Nadu (33)']);
+    expect((await searchCustomers('only here')).map((option) => option.detail)).toEqual(['No GSTIN · Tamil Nadu (33)']);
     pc.close();
   });
 

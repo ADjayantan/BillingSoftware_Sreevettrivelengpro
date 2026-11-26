@@ -8,5 +8,5 @@ import type { ReactNode } from 'react';
 export function NavLink({ href, className, children }: { href: string; className: string; children: ReactNode }) {
   const path = usePathname();
   const here = path === href || path.startsWith(`${href}/`);
-  return <Link href={href} prefetch={false} className={className} {...(here ? { 'aria-current': 'page' as const } : {})}>{children}</Link>;
+  return <Link href={href} className={className} {...(here ? { 'aria-current': 'page' as const } : {})}>{children}</Link>;
 }

@@ -10,6 +10,7 @@ import {
   type ActiveStudRow,
 } from '@/lib/gemini';
 import { PAGE_ROWS, readAllRows } from '@/lib/read-all';
+import { getCachedJwks } from '@/lib/supabase/jwks';
 import { createClient } from '@/lib/supabase/server';
 
 const NO_STORE = { 'cache-control': 'no-store' };
@@ -19,8 +20,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (request.headers.get('sec-fetch-site') === 'cross-site') {
       throw new ApiError(403, 'FORBIDDEN', 'Cross-site request refused');
     }
-    const supabase = await createClient();
-    const { data: authData, error: authError } = await supabase.auth.getClaims();
+    const [supabase, jwks] = await Promise.all([createClient(), getCachedJwks()]);
+    const { data: authData, error: authError } = await supabase.auth.getClaims(undefined, jwks ? { jwks } : undefined);
     if (isAuthRetryableFetchError(authError)) throw unavailable();
     if (authData === null) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in again');
 

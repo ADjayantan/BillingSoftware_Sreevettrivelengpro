@@ -13,7 +13,7 @@ import { SignOut } from '@/components/sign-out';
 import { GEAR } from '@/lib/bill-art';
 
 const mark = (
-  <Link href="/home" prefetch={false} className="mark">
+  <Link href="/home" className="mark">
     <span className="mark-tile"><Drawing art={GEAR} /></span>
     <Brand />
   </Link>
@@ -34,7 +34,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           <Net className="max-xl:hidden" />
           <Net short className="xl:hidden" />
           <button type="button" className="round" popoverTarget="make-menu" aria-label="Make something new"><Icon name="plus" /></button>
-          <Link href="/billing" prefetch={false} className="make">New bill<kbd className="kbd max-lg:hidden">Alt N</kbd></Link>
+          <Link href="/billing" prefetch className="make">New bill<kbd className="kbd max-lg:hidden">Alt N</kbd></Link>
         </div>
       </header>
       <nav className="top-nav" aria-label="Main">

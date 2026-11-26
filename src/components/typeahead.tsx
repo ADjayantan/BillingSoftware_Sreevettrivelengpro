@@ -43,7 +43,7 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
         pending.current = false;
         show(found);
       });
-    }, 150);
+    }, 75);
   }
 
   /** A loose option is a guess: it is there to choose, but Enter alone does not take it. */

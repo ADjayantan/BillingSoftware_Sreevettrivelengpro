@@ -163,3 +163,24 @@ describe('sign-in return path', () => {
     }
   });
 });
+
+describe('JWKS cache', () => {
+  it('fetches HTTPS JWKS once across repeated calls and ignores plain HTTP test URLs', async () => {
+    const { getCachedJwks } = await import('@/lib/supabase/jwks');
+    expect(await getCachedJwks()).toBeUndefined();
+
+    let calls = 0;
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example-project.supabase.co');
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      calls += 1;
+      expect(String(input)).toBe('https://example-project.supabase.co/auth/v1/.well-known/jwks.json');
+      return Response.json({ keys: [{ kty: 'EC', crv: 'P-256', kid: 'k1', x: 'a', y: 'b' }] });
+    });
+
+    const first = await getCachedJwks();
+    const second = await getCachedJwks();
+    expect(first).toEqual({ keys: [{ kty: 'EC', crv: 'P-256', kid: 'k1', x: 'a', y: 'b' }] });
+    expect(second).toEqual(first);
+    expect(calls).toBe(1);
+  });
+});

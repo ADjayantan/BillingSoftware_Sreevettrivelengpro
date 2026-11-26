@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { BillingMathError } from '@/lib/billing-math';
 import { DraftError } from '@/lib/bill-draft';
+import { getCachedJwks } from '@/lib/supabase/jwks';
 import { createClient } from '@/lib/supabase/server';
 
 export class ApiError extends Error {
@@ -154,8 +155,8 @@ export function route<P extends Params = Params>(handler: (context: ApiContext<P
   return async (request: Request, context: { params: Promise<P> }): Promise<Response> => {
     try {
       if (request.headers.get('sec-fetch-site') === 'cross-site') throw new ApiError(403, 'FORBIDDEN', 'Cross-site request refused');
-      const supabase = await createClient();
-      const { data, error: authError } = await supabase.auth.getClaims();
+      const [supabase, jwks] = await Promise.all([createClient(), getCachedJwks()]);
+      const { data, error: authError } = await supabase.auth.getClaims(undefined, jwks ? { jwks } : undefined);
       if (isAuthRetryableFetchError(authError)) throw unavailable();
       if (data === null) throw new ApiError(401, 'UNAUTHENTICATED', 'Sign in again');
       const result = await handler({ request, supabase, params: await context.params });

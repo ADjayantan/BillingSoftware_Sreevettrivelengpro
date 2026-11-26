@@ -18,7 +18,7 @@ const rupees = (decimal: string): string => formatRupees(decimalToPaise(decimal)
 export function Doings({ toCollect, toSend }: { toCollect: number; toSend: number }) {
   const doing = (href: string, icon: IconName, title: string, note: string, main = false) => (
     <Link
-      key={href} href={href} prefetch={false}
+      key={href} href={href}
       className={`flex min-h-28 flex-col items-center justify-center gap-1 rounded-[3px] border px-2 py-3 text-center max-side:min-h-0 ${main ? 'border-accent bg-accent text-white hover:bg-accent-2 max-side:col-span-3 max-side:flex-row max-side:gap-3 max-side:py-4' : 'border-line bg-card hover:border-slate'}`}
     >
       <Icon name={icon} className={`size-7 ${main ? '' : 'text-accent'}`} />

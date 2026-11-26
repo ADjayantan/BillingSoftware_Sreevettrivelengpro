@@ -19,5 +19,5 @@ export function MakeMenu({ children }: { children: ReactNode }) {
 }
 
 export function MakeLink({ href, children }: { href: string; children: ReactNode }) {
-  return <Link href={href} prefetch={false} className="menu-link">{children}</Link>;
+  return <Link href={href} className="menu-link">{children}</Link>;
 }

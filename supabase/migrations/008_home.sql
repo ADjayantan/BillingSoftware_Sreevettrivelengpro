@@ -125,7 +125,7 @@ begin
                                       where s.invoice_date >= m.month and s.invoice_date < (m.month + interval '1 month')::date) as t),
     'to_send', (select count(*) from public.deliveries as d join public.invoices as i on i.id = d.invoice_id
                  where d.status in ('pending', 'packed') and i.cancelled_at is null),
-    'not_on_drive', (select count(*) from public.invoices as i where i.drive_sync_pending))
+    'not_on_drive', (select count(*) from public.invoices as i where i.drive_sync_pending and i.cancelled_at is null))
     into v_answer;
   return v_answer;
 end;

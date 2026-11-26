@@ -386,11 +386,14 @@ function BillEditor({ opened, onNew, onReopen }: {
       builtLines.push(baseLine);
     }
 
+    const hasCustomerInNote = resolvedCustomer !== null || Boolean(parsed.customer_query);
+    if (hasCustomerInNote) setOnlyHere(null);
     setForm((old) => ({
       ...f.changeType(old, parsed.bill_type),
-      customer: resolvedCustomer ?? old.customer,
+      customer: hasCustomerInNote ? resolvedCustomer : old.customer,
       customerText: resolvedCustomer?.name ?? parsed.customer_query ?? old.customerText,
-      dueDate: resolvedCustomer ? null : old.dueDate,
+      newCustomer: hasCustomerInNote ? null : old.newCustomer,
+      dueDate: hasCustomerInNote ? null : old.dueDate,
       lines: f.withTrailingBlank(builtLines.length > 0 ? builtLines : old.lines, parsed.bill_type),
       packing: parsed.delivery.packing_charge ? trimZeros(parsed.delivery.packing_charge.amount_inr) : old.packing,
       freight: parsed.delivery.delivery_charge ? trimZeros(parsed.delivery.delivery_charge.amount_inr) : old.freight,
@@ -400,7 +403,7 @@ function BillEditor({ opened, onNew, onReopen }: {
         vehicle_no: parsed.delivery.vehicle_no ?? old.transport.vehicle_no,
       },
     }));
-    if (resolvedCustomer) void loadLots(resolvedCustomer);
+    if (hasCustomerInNote) void loadLots(resolvedCustomer);
     setAiBusy(false);
     setAiStatus(parsed.warnings.length > 0 ? 'Filled, but something was not clear. Check every box before you save.' : 'Filled. Check every box before you save.');
   }
@@ -563,7 +566,7 @@ function BillEditor({ opened, onNew, onReopen }: {
               ) : (
                 <Field label="Customer" hint={form.customer ? `${customerDetail(form.customer)}${onlyHere === form.customer.id ? ' · new, saved on this device' : ''}` : 'Type a name, phone or GSTIN'}>
                   <Typeahead
-                    inputLabel="Customer" autoFocus text={form.customerText} search={searchCustomers}
+                    inputLabel="Customer" autoFocus text={form.customerText} picked={form.customer !== null} search={searchCustomers}
                     add={form.customer ? undefined : { label: addLabel, onAdd: openNew }}
                     onText={(customerText) => {
                       if (form.customer) void loadLots(null);
@@ -733,9 +736,12 @@ function BillEditor({ opened, onNew, onReopen }: {
               </div>
             ) : null}
             {amounts && 'problem' in preview ? <p className="font-semibold text-warn">{preview.problem}</p> : null}
-            {glance && decimalToPaise(glance.balance) > 0 ? (
-              <p className="flex items-center gap-2 rounded-[3px] border-l-[3px] border-due bg-due-bg px-3 py-2 text-sm font-semibold text-due"><Icon name="clock" className="size-[18px]" />Old balance of this customer {formatRupees(decimalToPaise(glance.balance))}</p>
-            ) : null}
+            {(() => {
+              const oldBalancePaise = glance ? decimalToPaise(glance.balance) : form.customer ? decimalToPaise(form.customer.opening_balance) : 0;
+              return oldBalancePaise > 0 ? (
+                <p className="flex items-center gap-2 rounded-[3px] border-l-[3px] border-due bg-due-bg px-3 py-2 text-sm font-semibold text-due"><Icon name="clock" className="size-[18px]" />Old balance of this customer {formatRupees(oldBalancePaise)}</p>
+              ) : null;
+            })()}
             <div className="flex items-end gap-2">
               <Field label="Received now ₹" className="flex-1"><input className="field num" inputMode="decimal" value={form.paid} onChange={(event) => patch({ paid: event.target.value })} /></Field>
               {form.paid.trim() === '' ? null : (

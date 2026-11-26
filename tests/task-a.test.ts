@@ -444,6 +444,33 @@ describe('a product without a size', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ margin_alerts: [{ code: 'LOW_MARGIN', line: 1 }], warnings: [{ code: 'ITEM_UNRESOLVED', line: 0 }] });
   });
+
+  it('resolves customers and studs beyond the first 1,000 rows in parse-bill and margin-check', async () => {
+    await db.exec(
+      `insert into public.customers (name, state_code, credit_days, is_active)
+       select 'Crowd Customer ' || lpad(i::text, 5, '0'), '33', 0, true from generate_series(1, 1005) as i`,
+    );
+    const { rows: zuluRows } = await db.query<{ id: string }>(
+      `insert into public.customers (id, name, state_code, credit_days, is_active)
+       values ('ffffffff-ffff-4fff-8fff-fffffffffff1', 'Zulufast Marine Works', '33', 0, true) returning id`,
+    );
+    const zuluId = zuluRows[0]!.id;
+
+    try {
+      const parseRoute = await import('@/app/api/ai/parse-bill/route');
+      const parseRes = await parseRoute.POST(
+        new Request('http://localhost/api/ai/parse-bill', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: 'Zulufast Marine Works supply, MS M8 x 45 mm full thread, 100 pcs, Rs 3.10 each' }),
+        }),
+      );
+      expect(parseRes.status).toBe(200);
+      expect(await parseRes.json()).toMatchObject({ customer_id: zuluId });
+    } finally {
+      await db.exec(`delete from public.customers where name like 'Crowd Customer %' or id = 'ffffffff-ffff-4fff-8fff-fffffffffff1'`);
+    }
+  });
 });
 
 describe('Task A · 3. Metal Rates Cron & Spike Alerts (MR-01–MR-10 from specs/metal-rate-samples.json)', () => {

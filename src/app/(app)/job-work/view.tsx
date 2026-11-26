@@ -79,7 +79,7 @@ function LotForm({ lot, onClose }: { lot: JobWorkLot | null; onClose: () => void
     <form onSubmit={(event) => void save(event)} onKeyDown={enterAdvances} className="card mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label={lot ? 'Change material' : 'Material came in'}>
       {lot ? null : (
         <Field label="Customer" className="xl:col-span-2">
-          <Typeahead inputLabel="Customer" autoFocus text={customerText} onText={(value) => { setCustomerText(value); setCustomerId(''); }} search={searchCustomers}
+          <Typeahead inputLabel="Customer" autoFocus text={customerText} picked={customerId !== ''} onText={(value) => { setCustomerText(value); setCustomerId(''); }} search={searchCustomers}
             onPick={(option) => { setCustomerText(option.label); setCustomerId(option.value.id); }} />
         </Field>
       )}

@@ -165,17 +165,22 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const input = await body(request, MarginCheckRequestSchema);
 
-    const studsRes = await supabase
-      .from('stud_items')
-      .select('id, diameter_mm, length_mm, material_grade, unit_weight_kg, unit_weight_is_manual')
-      .eq('is_active', true)
-      .not('diameter_mm', 'is', null); // studs only: nothing else has a metal cost to compare with
-    const ratesRes = await supabase
-      .from('latest_metal_rates')
-      .select('material_grade, rate_per_kg');
-
-    const studRows = must(studsRes) as StudCostRow[];
-    const rateRows = must(ratesRes) as MetalRateCostRow[];
+    const ids = [...new Set(input.items.flatMap((item) => item.stud_item_id ?? []))];
+    const [studRows, rateRows] = await Promise.all([
+      ids.length === 0
+        ? Promise.resolve([] as StudCostRow[])
+        : Promise.resolve(
+            supabase
+              .from('stud_items')
+              .select('id, diameter_mm, length_mm, material_grade, unit_weight_kg, unit_weight_is_manual')
+              .in('id', ids)
+              .eq('is_active', true)
+              .not('diameter_mm', 'is', null), // studs only: nothing else has a metal cost to compare with
+          ).then((res) => must(res) as StudCostRow[]),
+      Promise.resolve(supabase.from('latest_metal_rates').select('material_grade, rate_per_kg')).then(
+        (res) => must(res) as MetalRateCostRow[],
+      ),
+    ]);
 
     const studsById = new Map<string, StudCostRow>();
     for (const s of studRows) {

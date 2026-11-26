@@ -9,6 +9,7 @@ import {
   type DealerRateParsed,
   type MetalGradeCanonical,
 } from '@/lib/gemini';
+import { PAGE_ROWS, readAllRows } from '@/lib/read-all';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendTelegramAlert } from '@/lib/telegram';
 
@@ -212,19 +213,27 @@ export async function processDealerMetalRateMessage(options: {
   }
 
   // Fetch predecessor rate for each grade prior to receivedAt
-  const { data: historyRows, error: histErr } = await db
-    .from('metal_rates')
-    .select('material_grade, rate_per_kg, recorded_at')
-    .order('recorded_at', { ascending: false });
-  if (histErr) throw histErr;
-
-  const receivedMs = Date.parse(receivedAt);
-  const predecessorCentsByGrade = new Map<string, number>();
-  for (const row of (historyRows ?? []) as Array<{
+  const historyRows = await readAllRows<{
+    id: string;
     material_grade: string;
     rate_per_kg: string | number;
     recorded_at?: string;
-  }>) {
+  }>((after) => {
+    const page = db
+      .from('metal_rates')
+      .select('id, material_grade, rate_per_kg, recorded_at')
+      .order('id')
+      .limit(PAGE_ROWS);
+    return (after === null ? page : page.gt('id', after)).overrideTypes<
+      Array<{ id: string; material_grade: string; rate_per_kg: string | number; recorded_at?: string }>,
+      { merge: false }
+    >();
+  });
+  historyRows.sort((a, b) => Date.parse(b.recorded_at ?? '') - Date.parse(a.recorded_at ?? ''));
+
+  const receivedMs = Date.parse(receivedAt);
+  const predecessorCentsByGrade = new Map<string, number>();
+  for (const row of historyRows) {
     if (row.recorded_at && Number.isFinite(receivedMs) && Date.parse(row.recorded_at) >= receivedMs) {
       continue;
     }

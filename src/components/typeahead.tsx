@@ -6,7 +6,7 @@ import { focusNext } from './enter-advance';
 import { useConnection } from './use-connection';
 
 /** Type, arrow, Enter. Asks the server as you type, so no master list sits in memory. */
-export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFocus = false, inputLabel, onEmptyEnter, add }: {
+export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFocus = false, inputLabel, onEmptyEnter, add, picked }: {
   text: string;
   onText: (text: string) => void;
   search: (query: string) => Promise<Option<T>[]>;
@@ -18,6 +18,8 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
   onEmptyEnter?: () => boolean;
   /** The last entry of the list: what was typed is not in it. Enter takes it when nothing was found. */
   add?: { label: (text: string) => string; onAdd: (text: string) => void } | undefined;
+  /** True when an entry is already chosen; false when one must be chosen from the list. */
+  picked?: boolean | undefined;
 }) {
   const listId = useId();
   const offline = useConnection() === 'offline';
@@ -84,7 +86,7 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
     const input = event.currentTarget;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
-      if (!open) return lookUp(text);
+      if (!open) return lookUp(picked ? '' : text);
       const next = event.key === 'ArrowDown' ? active + 1 : Math.max(active, 0) - 1;
       setActive((next + count) % Math.max(1, count));
     } else if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
@@ -106,7 +108,7 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
       } else if (adding && open && active === options.length) {
         event.preventDefault();
         addTyped(text);
-      } else if (adding && !open) {
+      } else if ((adding || picked === false) && !open) {
         event.preventDefault(); // nothing was chosen yet: not a reason to move on
         lookUp(text);
       } else {
@@ -134,6 +136,9 @@ export function Typeahead<T>({ text, onText, search, onPick, placeholder, autoFo
         onChange={(event) => {
           onText(event.target.value);
           lookUp(event.target.value);
+        }}
+        onClick={() => {
+          if (!open && picked !== undefined) lookUp(picked ? '' : text);
         }}
         onFocus={(event) => event.target.select()}
         onBlur={() => setTimeout(() => setOpen(false), 120)}

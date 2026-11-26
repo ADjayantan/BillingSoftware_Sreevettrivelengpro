@@ -152,10 +152,10 @@ describe('the figures of Home', () => {
     ]);
   });
 
-  it('say how many goods wait and how many bills are not on Drive yet', async () => {
-    expect(await call('home_figures', [TODAY])).toMatchObject({ to_send: 9, not_on_drive: 10 });
+  it('say how many goods wait and how many bills are not on Drive yet (without cancelled ones)', async () => {
+    expect(await call('home_figures', [TODAY])).toMatchObject({ to_send: 9, not_on_drive: 9 });
     await db.query('update public.invoices set drive_sync_pending = false where id = $1', [bills.today!.invoice_id]);
-    expect(await call('home_figures', [TODAY])).toMatchObject({ not_on_drive: 9 });
+    expect(await call('home_figures', [TODAY])).toMatchObject({ not_on_drive: 8 });
   });
 
   it('are empty, not missing, in an empty book', async () => {

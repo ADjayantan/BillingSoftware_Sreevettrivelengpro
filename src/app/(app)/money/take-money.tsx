@@ -22,6 +22,7 @@ const owed = (bill: FoundBill): number => outstandingPaise(decimalToPaise(bill.g
 export function TakeMoney() {
   const router = useRouter();
   const [text, setText] = useState('');
+  const [customerId, setCustomerId] = useState<string | null>(null);
   const [bills, setBills] = useState<{ rows: FoundBill[]; more: boolean } | null>(null);
   const [chosen, setChosen] = useState<FoundBill | null>(null);
   const [form, setForm] = useState<MoneyForm | null>(null);
@@ -43,17 +44,19 @@ export function TakeMoney() {
   function clear(): void {
     asked.current += 1;
     receiptId.current = null;
+    setCustomerId(null);
     setBills(null);
     setChosen(null);
     setForm(null);
     setError(null);
   }
 
-  async function open(customerId: string): Promise<void> {
+  async function open(nextCustomerId: string): Promise<void> {
     clear();
+    setCustomerId(nextCustomerId);
     setSaved(null);
     const ticket = asked.current;
-    const reply = await api<BillsFound & { hasMore: boolean }>(`/api/invoices?${new URLSearchParams({ show: 'open', customer: customerId }).toString()}`);
+    const reply = await api<BillsFound & { hasMore: boolean }>(`/api/invoices?${new URLSearchParams({ show: 'open', customer: nextCustomerId }).toString()}`);
     if (ticket !== asked.current) return; // another customer was picked meanwhile
     if (!reply.ok) return setError(reply.message);
     setBills({ rows: reply.data.rows, more: reply.data.hasMore });
@@ -88,7 +91,7 @@ export function TakeMoney() {
       {saved ? <Notice>{saved}</Notice> : null}
       <Field label="Who paid">
         <Typeahead
-          key={round} inputLabel="Who paid" autoFocus placeholder="Customer name, phone or GSTIN" text={text} search={searchCustomers}
+          key={round} inputLabel="Who paid" autoFocus placeholder="Customer name, phone or GSTIN" text={text} picked={customerId !== null} search={searchCustomers}
           onText={(value) => {
             setText(value);
             clear();

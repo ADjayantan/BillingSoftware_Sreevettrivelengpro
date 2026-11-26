@@ -138,8 +138,11 @@ describe('GET /api/customers/[id]/glance', () => {
     await queryAs(db, ACTORS.owner, 'update public.stud_items set is_active = true where id = $1', [md.studItemId]);
   });
 
-  it('a customer without bills has nothing to show, and nobody else may look', async () => {
+  it('a customer without bills has nothing to show (except any opening balance), and nobody else may look', async () => {
     expect((await glance(md.kaCustomerId)).data).toEqual({ bills: 0, balance: '0.00', last: null });
+    await queryAs(db, ACTORS.staff, 'update public.customers set opening_balance = 500 where id = $1', [md.kaCustomerId]);
+    expect((await glance(md.kaCustomerId)).data).toEqual({ bills: 0, balance: '500.00', last: null });
+    await queryAs(db, ACTORS.staff, 'update public.customers set opening_balance = 0 where id = $1', [md.kaCustomerId]);
     expect((await glance(md.tnCustomerId, '?type=job_work')).data).toMatchObject({ bills: 53, last: null });
     expect((await glance(md.tnCustomerId, '?type=other')).status).toBe(400);
     expect((await glance('nope')).status).toBe(400);

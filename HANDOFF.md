@@ -1,28 +1,28 @@
-# StudFlow: hand-over (26 Nov 2026)
+# StudFlow: hand-over (26 Nov 2026, evening)
 
-For the next AI coding agent (the owner goes on in Google Antigravity). `AGENTS.md` holds the rules every agent keeps; read `CLAUDE.md` and `PROJECT_BRIEF.md` first, then this.
+For the next AI coding agent. `AGENTS.md` holds the rules every agent keeps; read `CLAUDE.md` and `PROJECT_BRIEF.md` first, then this.
 
 ## Where it stands
 
-- Live site = commit `fb10539`. GitHub `main` has everything below (pushed on 26 Nov, owner: "push pannu"). **Nothing after `fb10539` is deployed.**
-- After `5bdb1d2` (25 Nov) came three things, each approved by the owner:
-  1. **The new look, part 1** (`specs/new-look.md`, migration 008): menu, Home, Bills, bill page, Money received, Send goods, Find, New bill in three steps, every word in easy English.
-  2. **The clean look** (26 Nov, "AJIO as the reference", approved "Nalla irukku"): white, thin lines, menu on top, one gold, Palatino titles. Nothing of AJIO's own.
-  3. **What each company owes** on Customers (26 Nov, approved "Aamaa, sari"): balance with the opening balance, the late part, bills to collect, *Owes most* (`customer_balances` in 008).
-- Live database has migrations **001–004 only** (read on 25 Nov 2026) and no business data. The deploy needs **005, 006, 007, 008 first, in that order**. Never the other way round, never back to a version before 005 afterwards. 008 only reads; the version before it works with it.
-- Vercel project `studflow` is not connected to Git: a push does not deploy. If it is ever connected, run the migrations before that.
-- Checked on 26 Nov: 1049 tests, 244 database tests, lint, typecheck, build; `/billing` first load 165.9 KB (limit 170). In a real browser, on a practice copy with made-up data: keyboard walk 42 checks, cloud-down walk 13, 28 print jobs, every page at 16 window widths from 320 to 1920 px, 120-letter names and one-crore bills. Not checked: the owner's phone and printer, the real Google Drive.
+- **Live** (read by Claude on 26 Nov, read-only): the site `studflow-six.vercel.app` runs commit `64ed469`; GitHub `main` is `64ed469` too. Antigravity made `f71a1e3` (fixes) and `64ed469` (loading shell, link prefetch, sign-in key cache, region bom1) and deployed both.
+- **Live database** `studflow-production`: migrations 001–008, two owner logins, the Company page filled, public sign-ups off, no bills. 001–008 are applied: a change of schema is `009_*.sql` or later.
+- **Not ready for the first bill:** the INV and DC counters are not opened (`specs/golive-runbook.md`, section 3). Billing is refused until the owner gives the last numbers of the paper book (or 0) and says yes to writing them; a bill saved before that waits on the device and becomes real the moment the counters open.
+- Whether the Vercel project now deploys on a push is not known (the last deploys carry commit ids). Find out before the next push: a deploy must never come before its migration.
+- After `5bdb1d2` (25 Nov), each approved by the owner: the new look part 1 (`specs/new-look.md`, migration 008); the clean look ("AJIO as the reference"); what each company owes on Customers.
+- **The PC app** (`desktop/`, `specs/desktop-app.md`, owner: "2 ok da. certificate la vanga vena da macha. ana ithu security ni enna panna num panni du"): built in this folder on 26 Nov and **not committed**. `StudFlow-Setup.exe` 1.0.0 (SHA-256 in `desktop/README.md`) is installed on the owner's PC and opens the live sign-in page. Its Print goes straight to the printer kept for A4 or A5 once the web part (print button, mic message, `src/lib/desktop.ts`) is deployed; until then Print opens the Windows print window.
+- Checked on 26 Nov after the PC app: the root suite, database tests, lint, typecheck, build; in the practice copy, inside the program: the keyboard walk 42, the cloud-down walk 13, the program's own checks 21; the keyboard walk in Edge 42; `desktop/scripts/check-exe.sh`, 19 locks of the built exe. Not checked: the owner's real printer, phone, and Google Drive.
+- The walks now wait until React has taken a control over and the grey loading shell has gone: since `64ed469` pages arrive in parts, and the Edge walk on `main` stopped at "Record money" before that.
 - The print design is approved by the owner ("Nalla irukku"). Do not redesign the bill.
-- `handoff/ai-fill-fix.patch`: an unfinished change of another session (retired Gemini model, time limit, built-in parser). It still applies on top of all this (`git apply --check`). Run all checks before keeping it.
-- Known and not fixed, because that patch owns the file: the built-in parser of dealer messages (`src/lib/gemini.ts`, used without a Gemini key; with the patch also when Gemini does not answer) drops the first grade when it stands on the same line as "Rs/kg:" ("Rs/kg: MS round 58.25 | EN8 84.25" loses MS).
-- Money for dues from before the software is written by lowering the customer's opening balance: no receipt exists for it yet. A receipt for old dues belongs with part 3.
+- `handoff/ai-fill-fix.patch`: an unfinished change of another session (retired Gemini model, time limit, built-in parser). Run all checks before keeping it.
+- Known and not fixed, because that patch owns the file: the built-in parser of dealer messages (`src/lib/gemini.ts`) drops the first grade when it stands on the same line as "Rs/kg:".
+- Money for dues from before the software is written by lowering the customer's opening balance: no receipt exists for it yet (part 3).
 
 ## Never
 
-- Change `tests/billing-math.test.ts` or migrations 001–004.
+- Change `tests/billing-math.test.ts` or an applied migration (001–008).
 - Read out, print, commit or paste a secret, or a real GSTIN, bank account, phone or address. `.env*` stays ignored. Do not open the env files: tests, lint and build need none of them.
-- Run `npm run dev` or `next start` in a folder with the env files: both point at the live database (`next start` also at the real Drive). Use `handoff/practice-copy/`.
-- Commit, push, deploy, migrate the live database or send Telegram messages without the owner's yes, each time.
+- Run `npm run dev` or `next start` in a folder with the env files: both point at the live database (`next start` also at the real Drive). Use `handoff/practice-copy/`. Point the PC app's development run only at the practice copy.
+- Commit, push, deploy, migrate or write the live database, or send Telegram messages, without the owner's yes, each time.
 - Start review agents or mutation testing: the owner ruled them out.
 
 ## Working with the owner
@@ -33,22 +33,22 @@ Answers in simple Tanglish, short. Not a software person: show a picture of real
 
 `npm ci` · `npm test` · `npm run db:verify` · `npm run lint` · `npm run typecheck` · `npm run build`
 
-`handoff/practice-copy/` (Windows, Node 24, Edge): the app against an in-memory database with every migration, all live settings blanked, made-up data (`fill.mjs`), and the browser walks used above. See its `README.md`.
+`handoff/practice-copy/` (Windows, Node 24, Edge): the app against an in-memory database, all live settings blanked, made-up data, and the walks above; `fresh.mjs` runs one on fresh data. See its `README.md`. The PC app: `desktop/README.md`.
 
 ## Waiting, only when the owner says so
 
-1. Commit and push this work; live migrations 005 → 006 → 007 → 008; then deploy.
-2. Hosting: Vercel Hobby forbids a company's use. Netlify Free (hard monthly stop) or Vercel Pro; not decided.
-3. Owner: fill the Company page on live, open the INV and DC series (last used numbers), give logins access (`private.app_users`).
-4. Check with the real Google Drive, the owner's phone and printer. Vercel Hobby and a fourth cron job.
+1. INV and DC counters: the last numbers of the paper book (or 0), then the runbook's block on live.
+2. Commit and push the PC app and its web part; deploy the web part.
+3. Hosting: Vercel Hobby forbids a company's use. Netlify Free (hard monthly stop) or Vercel Pro; not decided.
+4. One real A4 and one real A5 print from the PC app on the shop printer; the owner's phone; the real Google Drive.
 
 ## The parts of the new look
 
 Owner: "not professional, not easy to use", "like Zoho billing, free", "no Tanglish in the software, easy English", "AJIO as the reference, clean". Zoho and AJIO are measures, never copied. One company, the owner's own.
 
-1. New look, menu, Home, Bills, Money received, Send goods, Find, New bill in three steps, the clean look, what each company owes: **built and approved**.
+1. New look, menu, Home, Bills, Money received, Send goods, Find, New bill in three steps, the clean look, what each company owes: **built and approved**. The PC app: **built**, waiting for the owner's first real print.
 2. Quotation that becomes a bill in one click.
-3. Customer page: statement, receipt for dues from before, UPI QR; icon to install on PC and phone.
+3. Customer page: statement, receipt for dues from before, UPI QR.
 4. Credit note.
 5. Reports and the GSTR-1 file.
 6. Expenses and suppliers. Later: e-way bill, recurring bills, stock.

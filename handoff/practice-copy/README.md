@@ -10,11 +10,14 @@ Needs Windows, Node 24, Microsoft Edge and Git Bash. From the project folder:
 2. `node handoff/practice-copy/local-check.mjs` starts it on http://localhost:3100 with a database on port 54321. Any password signs in `owner@studflow.test`, or `staff@studflow.test` for the staff view.
 3. `node handoff/practice-copy/fill.mjs` adds made-up customers, products and 16 bills.
 
-Checks, each on fresh data (start `local-check.mjs` again and fill again):
+Checks, each on fresh data (start `local-check.mjs` again and fill again, or let `fresh.mjs` do both: `node handoff/practice-copy/fresh.mjs . handoff/practice-copy/walk.mjs`):
 
 - `walk.mjs`: the day's work by keyboard, 42 checks.
 - `outage.mjs`: the cloud goes down while a bill is made, 13 checks.
 - `widths.mjs [widths…]`: every page at each window width; says what is too wide, out of its box or cut.
 - `print-check.mjs`: 28 print jobs of A4 and A5 bills and challans, printed to PDF by Edge.
+- `desktop-check.mjs`: the PC app (`desktop/`, built with `npm run build` there): its window, links, permissions, straight printing (to PDF), the Excel download, the mic, a second start, no site to reach; 21 checks.
+
+`fresh.mjs . --program <port> walk.mjs` (or `outage.mjs`) runs a walk inside the PC app: `ATTACH=<port>` makes `cdp.mjs` drive that program's page instead of starting Edge.
 
 `APP` and `DB` (environment) point the scripts at another copy, for example `APP=http://localhost:3101 DB=http://127.0.0.1:54331`.

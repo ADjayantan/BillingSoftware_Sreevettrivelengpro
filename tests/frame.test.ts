@@ -69,7 +69,9 @@ describe('the software speaks easy English', () => {
   const TANGLISH = /tanglish|vanakkam|nandri|\b(irukku|pannunga|panniten|anuppunga|venum|vendaam|kuduppaanga|paarunga|paathukkonga|kidaikkaadhu|innaikku|aagudhu|mudinju|baaki|namma|macha|kanakku|thogai)\w*|\w-ku\b/i;
   const spoken = [...files('src/app'), ...files('src/components'), ...files('public')]
     .filter((file) => /\.(tsx|html|json)$/.test(file) || /src\/app\/api\/cron\/.*\.ts$/.test(file))
-    .concat(['src/lib/whatsapp.ts', 'src/lib/telegram.ts', 'src/lib/queue-note.ts', 'src/lib/bill-state.ts', 'src/lib/bill-form.ts', 'src/lib/api-client.ts', 'src/lib/api/http.ts', 'public/sw.js']);
+    .concat(['src/lib/whatsapp.ts', 'src/lib/telegram.ts', 'src/lib/queue-note.ts', 'src/lib/bill-state.ts', 'src/lib/bill-form.ts', 'src/lib/api-client.ts', 'src/lib/api/http.ts', 'public/sw.js'])
+    // The PC app: what the page says about printing and voice, and the program's own windows.
+    .concat(['src/lib/desktop.ts', 'desktop/src/main.ts']);
 
   it('in every file that says something', () => {
     expect(spoken.length).toBeGreaterThan(45);

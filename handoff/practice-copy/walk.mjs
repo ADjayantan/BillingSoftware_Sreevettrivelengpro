@@ -25,7 +25,14 @@ const until = async (expression, ms = 6000) => {
   return false;
 };
 const click = (selector) => page.run(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) throw new Error('no ' + ${JSON.stringify(selector)}); e.click(); })()`);
-const clickText = (words, inside = 'body') => page.run(`(() => { const e = [...document.querySelectorAll(${JSON.stringify(inside)} + ' button, ' + ${JSON.stringify(inside)} + ' a')].find((x) => x.offsetParent !== null && x.textContent.trim().toLowerCase().startsWith(${JSON.stringify(words.toLowerCase())})); if (!e) throw new Error('no button ' + ${JSON.stringify(words)}); e.click(); })()`);
+// A control drawn by the server does nothing until React has taken it over; since the loading
+// shell (64ed469) pages arrive in parts, so the walk waits for that before it acts.
+const live = (element) => `((e) => !!e && Object.keys(e).some((k) => k.startsWith('__reactProps')))(${element})`;
+const clickText = async (words, inside = 'body') => {
+  const find = `[...document.querySelectorAll(${JSON.stringify(inside)} + ' button, ' + ${JSON.stringify(inside)} + ' a')].find((x) => x.offsetParent !== null && x.textContent.trim().toLowerCase().startsWith(${JSON.stringify(words.toLowerCase())}))`;
+  if (!(await until(live(find)))) throw new Error(`no button ${words}`);
+  await page.run(`${find}.click()`);
+};
 const focusName = () => page.run(`document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.closest('label')?.querySelector('span')?.innerText ?? document.activeElement?.textContent ?? ''`);
 const typeThenEnter = async (words, wait = 500) => {
   await page.type(words);
@@ -42,7 +49,7 @@ try {
   check('sign-in starts at Home', (await page.run('location.pathname')) === '/home');
 
   // ---- New bill, keyboard only
-  await page.go(`${APP}/billing`, `document.querySelector('[data-place="customer"] input')`);
+  await page.go(`${APP}/billing`, live(`document.querySelector('[data-place="customer"] input')`));
   await page.run(`document.querySelector('[data-place="customer"] input').focus()`);
   await typeThenEnter('murugan', 700);
   check('customer picked', /Murugan Engineering Works/.test(await page.run(`document.querySelector('[data-place="customer"] input').value`)));
@@ -104,7 +111,7 @@ try {
   await clickText('Sale', 'main');
 
   // ---- Money received
-  await page.go(`${APP}/money`, `document.querySelector('input[aria-label="Who paid"]')`);
+  await page.go(`${APP}/money`, live(`document.querySelector('input[aria-label="Who paid"]')`));
   await page.run(`document.querySelector('input[aria-label="Who paid"]').focus()`);
   await typeThenEnter('kongu', 700);
   check('the unpaid bill comes with its amount', await until(`document.querySelector('input[name="amount"]')?.value === '39309.00'`), await page.run(`document.querySelector('input[name="amount"]')?.value ?? 'no box'`));

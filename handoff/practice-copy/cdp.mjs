@@ -6,12 +6,18 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// ATTACH=<port>: drive the page of a program already running with that debugging port (the PC
+// app's development run, desktop-check.mjs) instead of starting Edge.
 export async function browser(port = 9340) {
-  const edge = spawn('C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', ['--headless=new', '--disable-gpu', '--no-first-run', '--disable-extensions', '--hide-scrollbars', `--remote-debugging-port=${port}`, `--user-data-dir=${join(here, `edge-${port}`)}`, 'about:blank'], { stdio: 'ignore' });
+  const attach = Number(process.env.ATTACH) || 0;
+  if (attach) port = attach;
+  const edge = attach ? null : spawn('C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', ['--headless=new', '--disable-gpu', '--no-first-run', '--disable-extensions', '--hide-scrollbars', `--remote-debugging-port=${port}`, `--user-data-dir=${join(here, `edge-${port}`)}`, 'about:blank'], { stdio: 'ignore' });
   let target;
   for (let i = 0; i < 60 && !target; i += 1) {
     await sleep(250);
-    target = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' }).then((r) => r.json()).catch(() => undefined);
+    target = attach
+      ? await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json()).then((list) => list.find((t) => t.type === 'page')).catch(() => undefined)
+      : await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' }).then((r) => r.json()).catch(() => undefined);
   }
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve) => socket.addEventListener('open', resolve));
@@ -43,7 +49,8 @@ export async function browser(port = 9340) {
       await cdp('Page.navigate', { url });
       for (let i = 0; i < 100; i += 1) {
         await sleep(120);
-        if (await run(`document.readyState === 'complete' && !!(${until})`).catch(() => false)) return;
+        // Since the loading shell (64ed469) a page shows a grey skeleton first: wait until it has gone.
+        if (await run(`document.readyState === 'complete' && !document.querySelector('[aria-label="Loading page"]') && !!(${until})`).catch(() => false)) return;
       }
       throw new Error(`never ready: ${url}`);
     },
@@ -68,7 +75,7 @@ export async function browser(port = 9340) {
     },
     close() {
       socket.close();
-      edge.kill();
+      edge?.kill();
     },
   };
 }

@@ -14,6 +14,7 @@ import { distinctRates } from '@/lib/bill-draft';
 import * as f from '@/lib/bill-form';
 import { connection, onConnection } from '@/lib/connection';
 import { newCustomerFrom } from '@/lib/customer-form';
+import { VOICE_FAILED, VOICE_IN_PC_APP, desktopBridge } from '@/lib/desktop';
 import { addDays, formatDate, formatTime, istDate } from '@/lib/india';
 import { customerDetail, onlyStudByCode, openLots, searchCustomers, searchStuds } from '@/lib/master-search';
 import { decimalToPaise, formatInr, formatPaise, formatRupees, rupeesInWords, trimZeros } from '@/lib/money';
@@ -410,6 +411,11 @@ function BillEditor({ opened, onNew, onReopen }: {
 
   function startVoiceMic(): void {
     if (isOffline || listening) return;
+    // The PC app has no speech service of its own (specs/desktop-app.md, "Voice").
+    if (desktopBridge() !== null) {
+      setAiStatus(VOICE_IN_PC_APP);
+      return;
+    }
     const SpeechCtor = (
       window as unknown as {
         SpeechRecognition?: new () => {
@@ -455,7 +461,10 @@ function BillEditor({ opened, onNew, onReopen }: {
       const transcript = ev.results[0]?.[0]?.transcript ?? '';
       if (transcript) setAiText((prev) => (prev ? `${prev} ${transcript}` : transcript));
     };
-    rec.onerror = () => setListening(false);
+    rec.onerror = () => {
+      setListening(false);
+      setAiStatus(VOICE_FAILED);
+    };
     rec.onend = () => setListening(false);
     rec.start();
   }

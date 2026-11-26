@@ -39,6 +39,8 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
   src/lib/xlsx.ts           .xlsx writer (pure, no library); month-workbook.ts: one month as a book (pure);
                             month-data.ts: its reads; month-books.ts: the worker; drive-workbook.ts: its Drive file
   src/lib/{gemini,drive-backup,telegram}.ts   server-only integrations
+  desktop/                  the PC app (Electron, its own npm project): src/policy.ts = every rule (pure, tested from
+                            tests/), main.ts applies them, preload.ts = the bridge; src/lib/desktop.ts is its page side
   supabase/migrations/      append-only SQL
   tests/                    Vitest; tests/db = PGlite + Supabase shim
   ```
@@ -115,6 +117,13 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
 - "Same items again" (`repeatGoods`) never copies a GST %.
 - From `side:` (52rem) the menu stands on top (`.head`, then `.top-nav`, which sticks): a page has the window less 56 px, at most 1300 px. Look at 320, 390, 832, 1024, 1093 (a 1366 laptop at 125%), 1280, 1366 and 1536 (the owner's PC). Words inside a drawing shrink on a phone: the sales bars are boxes.
 - The clean look (owner, 26 Nov 2026: "AJIO as the reference", approved the same day): white, thin lines, 3 px corners, no shadows; one gold (`accent`) for the main action, slate for what is chosen, crimson only for the thin lines; states without boxes; the serif (`--font-serif`) for titles only, never for numbers. Nothing of AJIO's own (name, logo, pictures). Tokens in `globals.css`; classes that a utility must be able to beat go into `@layer components`. Contrast ≥ 4.5 for text.
+
+## The PC app (`desktop/`, `specs/desktop-app.md`, approved 26 Nov 2026)
+- One window on `APP_ORIGIN` (`desktop/src/policy.ts`) and nothing else: other https links go to the normal browser, every other kind is refused. It holds no key. If the site moves, change `APP_ORIGIN`, raise the version, rebuild.
+- Every rule is in `policy.ts`, pure and tested (`tests/desktop-policy.test.ts`); `main.ts` only applies them. A new permission, kind of link or call from the page goes there first, with its test.
+- The bridge has two calls, `print` and `choosePrinter`, no arguments; the paper comes from the print page's own address. The page finds it in `src/lib/desktop.ts`, hand-checked (no Zod in the client).
+- The installed exe never reads `STUDFLOW_*`, refuses debugging and safety-lowering switches (only what its caller passed: Electron adds `allow-file-access-from-files` to its own command line), and has fuses burnt in (`forge.config.js`). Development runs open only the practice copy on localhost, never the live site.
+- No code-signing certificate (owner) and no automatic update. About every two months: newest Electron, raise the version, `npm run make`, `bash desktop/scripts/check-exe.sh`, the practice checks, and the SHA-256 in `desktop/README.md`.
 
 ## Offline rules (Sprint 3A)
 - `/billing` stays **static with no data** (`dynamic = 'error'`): it is the offline shell, and the proxy lets a PC with a session cookie open it while the cloud is down. Data comes from `/api` (RLS) or Dexie.

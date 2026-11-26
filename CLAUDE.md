@@ -15,7 +15,7 @@ Crash-proof cloud billing & dispatch PWA for a stud-threading / job-work unit in
 - **Next.js App Router on Vercel.** Server Components by default; `'use client'` only for interactive leaves (forms, Dexie, voice input). Data reads happen on the server; mutations go through Route Handlers (`src/app/api/**/route.ts`) or Server Actions.
 - **Supabase** = Postgres + Auth + RLS. All durable data lives in Postgres; the browser only holds drafts and the unsynced queue.
 - **AI** = Gemini Flash, server routes only, JSON mode + Zod. No local LLM, no client-side ML/WASM models.
-- **Files** = PDFs rendered server-side, archived to Google Drive (`/StudFlow/<FY>/<MM>/…`); weekly DB backup to Drive. Two sign-ins: `GOOGLE_DRIVE_OAUTH_*` (a person's account, `drive.file` scope, made by `node scripts/drive-connect.ts`; wins when set) or a service account (Shared Drive only). Archiving starts in `after()`.
+- **Files** = PDFs rendered server-side, archived to Google Drive (`/StudFlow/<FY>/<MM>/…`); weekly DB backup to Drive. Sign-ins, first that exists wins: the Company page's "Connect Google Drive" (migration 009, `specs/drive-button.md`), then `GOOGLE_DRIVE_OAUTH_*` (a person's account, `drive.file` scope, made by `node scripts/drive-connect.ts`), then a service account (Shared Drive only). Archiving starts in `after()`.
 - Layout:
   ```
   src/app/                  routes, layouts, route handlers
@@ -125,6 +125,13 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
 - The installed exe never reads `STUDFLOW_*`, refuses debugging and safety-lowering switches (only what its caller passed: Electron adds `allow-file-access-from-files` to its own command line), and has fuses burnt in (`forge.config.js`). Development runs open only the practice copy on localhost, never the live site.
 - No code-signing certificate (owner) and no automatic update. About every two months: newest Electron, raise the version, `npm run make`, `bash desktop/scripts/check-exe.sh`, the practice checks, and the SHA-256 in `desktop/README.md`.
 
+## Connect Google Drive (migration 009, `specs/drive-button.md`, 26 Nov 2026: owner "You decide")
+- The owner connects Drive on the Company page; Google's refresh token is kept only **sealed** (AES-256-GCM, key by HKDF from `CRON_SECRET`, at least 32 characters) in `private.drive_link`. Changing `CRON_SECRET` means connecting again.
+- Four functions: `drive_link_status` (staff), `drive_link_save` / `drive_link_clear` (owner), `drive_link_secret` (`service_role` only, read by `driveCredentials` through `admin.ts`). No signed-in person can read the token, sealed or not; the row is not copied into the edit log.
+- `driveCredentials`: the button's link, else the settings, else none. A link that cannot be opened stops the copying with "connect Google Drive again"; it never falls back to another account's Drive. Pages ask `driveInfo` / `driveState` (no token).
+- `/api/drive/callback` is a cross-site visit from Google, so it is not behind `route()`: the state and PKCE verifier sealed in the `studflow_drive_oauth` cookie are its check. Only the words of `drive-words.ts` reach the page.
+- Google signs in only in a real browser: the PC app shows how instead of the button.
+
 ## Offline rules (Sprint 3A)
 - `/billing` stays **static with no data** (`dynamic = 'error'`): it is the offline shell, and the proxy lets a PC with a session cookie open it while the cloud is down. Data comes from `/api` (RLS) or Dexie.
 - A bill has one `OFFLINE-<uuid>` from the first moment: draft → queue (one transaction) → issued. Edits after a refusal keep the id. Never mint a second id for the same bill, never change a queued `draft`.
@@ -143,12 +150,12 @@ In the code (002 adds `company_profile`, `job_work_returns`, `payments`):
 - New-table checklist: RLS on; policies `to authenticated` gated by `(select private.is_staff())` / `(select private.is_owner())` (never `using (true)`); explicit grants after `revoke all … from anon, authenticated, service_role` (Supabase grants nothing by default since 30 Oct 2026, #45329; `service_role` gets only what cron needs); FK indexes; FKs `NO ACTION`; `private.stamp_row` + `private.log_change` triggers if mutable; every numeric column bounded above (`< 'Infinity'`: NaN passes `>= 0`).
 - `SECURITY DEFINER` only for deliberate RPCs and `private.*` helpers: `set search_path = ''`, schema-qualified names, explicit authorization check, `revoke execute … from public, anon`. Views use `with (security_invoker = true)`.
 - Multi-table writes that must be atomic are plpgsql RPCs (supabase-js has no client transactions). Invoices + items + DC are created only by `public.sync_invoice(jsonb)`.
-- `private` schema (not exposed by the Data API): `app_users` (access allowlist), `document_sequences` (gapless counters), `audit_log` (edit log, CGST Rule 56(8)), `book_changes` / `month_books` (Excel), helpers. Lock order is always INV → DC → job-work lots by id.
+- `private` schema (not exposed by the Data API): `app_users` (access allowlist), `document_sequences` (gapless counters), `audit_log` (edit log, CGST Rule 56(8)), `book_changes` / `month_books` (Excel), `drive_link` (the sealed Drive permission), helpers. Lock order is always INV → DC → job-work lots by id.
 - Access: only users listed in `private.app_users` can read or write anything. Bootstrap the owner in the SQL editor:
   `insert into private.app_users (user_id, display_name, role) select id, 'Owner', 'owner' from auth.users where email = '<owner email>';`
 - Go-live: open **both** series with the last numbers the old system used (0 = fresh start); billing is refused until then, later FYs roll forward by themselves:
   `insert into private.document_sequences (series, fiscal_year, last_value) values ('INV', '26-27', <last>), ('DC', '26-27', <last>);`
-- Go-live: fill in the Company page (billing is refused without it); run the migrations in order (001–008).
+- Go-live: fill in the Company page (billing is refused without it); run the migrations in order (001–009).
 - Go-live: turn off public sign-ups in Supabase Auth, and confirm the Data API gate registered (the migration warns if not).
 
 ## Performance budget

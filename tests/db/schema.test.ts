@@ -80,6 +80,7 @@ describe('migration', () => {
       { relname: 'audit_log', rls: true },
       { relname: 'book_changes', rls: true },
       { relname: 'document_sequences', rls: true },
+      { relname: 'drive_link', rls: true },
       { relname: 'month_books', rls: true },
     ]);
   });
@@ -135,6 +136,7 @@ describe('migration', () => {
       'public.book_failed',
       'public.book_hold',
       'public.book_set_file',
+      'public.drive_link_secret',
     ]);
     expect(rows.filter((r) => r.role === 'authenticated').map((r) => r.fn)).toEqual([
       ...helpers,
@@ -144,6 +146,9 @@ describe('migration', () => {
       'public.book_months',
       'public.book_retry',
       'public.customer_balances',
+      'public.drive_link_clear',
+      'public.drive_link_save',
+      'public.drive_link_status',
       'public.find_bills',
       'public.goods_to_send',
       'public.home_figures',

@@ -71,7 +71,9 @@ describe('the software speaks easy English', () => {
     .filter((file) => /\.(tsx|html|json)$/.test(file) || /src\/app\/api\/cron\/.*\.ts$/.test(file))
     .concat(['src/lib/whatsapp.ts', 'src/lib/telegram.ts', 'src/lib/queue-note.ts', 'src/lib/bill-state.ts', 'src/lib/bill-form.ts', 'src/lib/api-client.ts', 'src/lib/api/http.ts', 'public/sw.js'])
     // The PC app: what the page says about printing and voice, and the program's own windows.
-    .concat(['src/lib/desktop.ts', 'desktop/src/main.ts']);
+    .concat(['src/lib/desktop.ts', 'desktop/src/main.ts'])
+    // Connecting Google Drive from the Company page.
+    .concat(['src/lib/drive-words.ts']);
 
   it('in every file that says something', () => {
     expect(spoken.length).toBeGreaterThan(45);

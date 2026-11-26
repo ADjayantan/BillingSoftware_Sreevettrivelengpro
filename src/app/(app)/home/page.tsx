@@ -1,8 +1,9 @@
+import Link from 'next/link';
 import { FindBox } from '@/components/frame/find-box';
 import { toApiError } from '@/lib/api/http';
 import { bookStatus } from '@/lib/book-status';
 import { bookMonths, findBills, goodsToSend, homeFigures, latestRates } from '@/lib/data';
-import { isDriveConfigured } from '@/lib/drive-backup';
+import { driveInfo } from '@/lib/drive-backup';
 import { formatTime, istDate, monthName } from '@/lib/india';
 import { greeting, longDate } from '@/lib/look';
 import { rateText } from '@/lib/money';
@@ -22,7 +23,7 @@ export default async function HomePage() {
   const now = new Date();
   const today = istDate(now);
   const db = await createClient();
-  const [figures, open, goods, rates, months] = await Promise.all([
+  const [figures, open, goods, rates, months, drive] = await Promise.all([
     homeFigures(db, today),
     findBills(db, { show: 'open' }, today, 5),
     goodsToSend(db),
@@ -31,12 +32,15 @@ export default async function HomePage() {
       if (toApiError(error).status === 403) return null; // the books are the owner's
       throw error;
     }),
+    driveInfo(db),
   ]);
   // A new book: nothing sold in six months and nothing owed.
   const fresh = figures.to_collect.bills === 0 && figures.months.every(({ total }) => !/[1-9]/.test(total));
-  const drive = isDriveConfigured();
+  const driveOn = drive.state !== 'off';
   const book = months?.[0];
-  const status = book ? bookStatus(book, drive, now.getTime()) : null;
+  const status = book ? bookStatus(book, driveOn, now.getTime()) : null;
+  // The owner can put Drive right on the Company page (specs/drive-button.md).
+  const fix = drive.owner ? <> · <Link href="/company#drive" className="font-semibold text-accent underline">Company page</Link></> : null;
   const rate = [...rates].sort((a, b) => b.recorded_at.localeCompare(a.recorded_at))[0];
   return (
     <>
@@ -58,8 +62,8 @@ export default async function HomePage() {
             <SafeLine icon="sheet" good={status.tone === 'good'} title={`Excel book, ${monthName(book.month)}`} note={status.tone === 'good' && book.written_at ? `Updated ${formatTime(Date.parse(book.written_at))}` : status.text} />
           ) : null}
           <SafeLine
-            icon="drive" good={drive && figures.not_on_drive === 0} title="Google Drive"
-            note={!drive ? 'Not connected' : figures.not_on_drive === 0 ? 'Every bill is kept there' : `${bills(figures.not_on_drive)} not there yet`}
+            icon="drive" good={driveOn && figures.not_on_drive === 0} title="Google Drive"
+            note={!driveOn ? <>Not connected{fix}</> : figures.not_on_drive === 0 ? 'Every bill is kept there' : <>{bills(figures.not_on_drive)} not there yet{fix}</>}
           />
           <DeviceLine />
           {rate ? <SafeLine icon="trend" title={`${rate.material_grade} · ₹${rateText(rate.rate_per_kg)} a kg`} note={rateNote(rate.change_delta)} /> : null}

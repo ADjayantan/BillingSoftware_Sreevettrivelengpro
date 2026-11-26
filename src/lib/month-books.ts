@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { after } from 'next/server';
 import { z } from 'zod';
 import { must, parseRow } from '@/lib/api/http';
-import { getDriveCredentials, isDriveConfigured, type DriveCredentials } from '@/lib/drive-backup';
+import { driveCredentials, driveIsOn, getDriveCredentials, type DriveCredentials } from '@/lib/drive-backup';
 import { DriveProblem, openVault, UPLOAD_MS, type Workbook } from '@/lib/drive-workbook';
 import { readMonth } from '@/lib/month-data';
 import { monthWorkbook } from '@/lib/month-workbook';
@@ -51,8 +51,11 @@ const yes = async (db: SupabaseClient, name: string, args: Record<string, unknow
 };
 
 export async function runBooks(options: BookOptions = {}): Promise<BookRun[]> {
-  const creds = options.creds ?? getDriveCredentials();
   const db = options.db ?? createAdminClient();
+  // A sign-in that cannot be had is said on each month, so the owner reads it on the Excel page.
+  const creds = await (async () => options.creds ?? (await driveCredentials(process.env, db)) ?? getDriveCredentials())().catch(
+    (error: unknown) => (error instanceof Error ? error : new Error('Google Drive did not answer')),
+  );
   const until = Date.now() + (options.budgetMs ?? 100_000);
   const runs: BookRun[] = [];
   do {
@@ -69,13 +72,14 @@ export async function runBooks(options: BookOptions = {}): Promise<BookRun[]> {
   return runs;
 }
 
-async function writeMonth(db: SupabaseClient, claim: BookClaim, creds: DriveCredentials, fetchImpl: typeof fetch): Promise<BookRun> {
+async function writeMonth(db: SupabaseClient, claim: BookClaim, creds: DriveCredentials | Error, fetchImpl: typeof fetch): Promise<BookRun> {
   const { month } = claim;
   const mine = { p_month: month, p_token: claim.token };
   const lost: BookRun = { month, outcome: 'lost' };
   let stage: 'drive' | 'read' = 'drive';
   let newId: (() => Promise<string>) | undefined;
   try {
+    if (creds instanceof Error) throw creds;
     const vault = await openVault(creds, fetchImpl);
     newId = vault.newId;
     const kept = claim.drive_file_id === null ? null : await vault.file(claim.drive_file_id);
@@ -129,7 +133,7 @@ export function booksLater(options: BookOptions & { first?: () => Promise<unknow
   const { first, ...books } = options;
   const work = async (): Promise<void> => {
     await first?.().catch(() => undefined);
-    if (isDriveConfigured()) await runBooks(books).catch((error: unknown) => console.error('books error', error instanceof Error ? error.name : typeof error));
+    if (books.creds || (await driveIsOn())) await runBooks(books).catch((error: unknown) => console.error('books error', error instanceof Error ? error.name : typeof error));
   };
   try {
     after(work);

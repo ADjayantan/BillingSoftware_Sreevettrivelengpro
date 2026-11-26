@@ -16,6 +16,7 @@ Checks, each on fresh data (start `local-check.mjs` again and fill again, or let
 - `outage.mjs`: the cloud goes down while a bill is made, 13 checks.
 - `widths.mjs [widths…]`: every page at each window width; says what is too wide, out of its box or cut.
 - `print-check.mjs`: 28 print jobs of A4 and A5 bills and challans, printed to PDF by Edge.
+- `drive-check.mjs`: the Company page's Google Drive section (settings, not ready, connected by the button, Disconnect, staff), with pictures; 7 checks. Google itself is never reached.
 - `desktop-check.mjs`: the PC app (`desktop/`, built with `npm run build` there): its window, links, permissions, straight printing (to PDF), the Excel download, the mic, a second start, no site to reach; 21 checks.
 
 `fresh.mjs . --program <port> walk.mjs` (or `outage.mjs`) runs a walk inside the PC app: `ATTACH=<port>` makes `cdp.mjs` drive that program's page instead of starting Edge.

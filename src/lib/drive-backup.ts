@@ -4,9 +4,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { billSheets } from '@/lib/bill-sheets';
 import { getInvoice } from '@/lib/data';
+import { driveLinkKey, driveOAuthClient, unseal } from '@/lib/drive-link';
+import type { DriveState } from '@/lib/drive-words';
 import { buildDocuments } from '@/lib/print-documents';
 import type { InvoiceDocument } from '@/lib/schemas/invoices';
 import { sheetsToPdf } from '@/lib/sheet-pdf';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export { createZipArchive, type ZipEntryInput } from '@/lib/zip';
 
@@ -172,6 +175,93 @@ export function getDriveCredentials(env: NodeJS.ProcessEnv = process.env): Drive
   knownVaultFolderIds.add(rootFolderId);
 
   return { ...location, clientEmail, privateKey: normalizedKey };
+}
+
+/** The words month-books.ts turns into "connect Google Drive again" for the owner. */
+export const DRIVE_RELINK = 'Google Drive permission has expired: connect Google Drive again';
+
+const driveLinkSecret = z.object({ sealed: z.string(), folder_id: z.string() }).nullable();
+const driveLinkStatus = z.object({
+  linked: z.boolean(),
+  owner: z.boolean().optional(),
+  account_email: z.string().nullable().optional(),
+  connected_at: z.string().nullable().optional(),
+});
+
+// PGRST202 / 42883: the function is not there, a database from before 009. The settings then hold.
+const missingFunction = (error: { code?: string }): boolean => error.code === 'PGRST202' || error.code === '42883';
+
+/** Background copying reads the link as the server (admin.ts); without its key there is no link to read. */
+function serverDb(): SupabaseClient | null {
+  try {
+    return createAdminClient();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The Drive sign-in in force (specs/drive-button.md): the one made with the Company page's
+ * button, else the server settings, else null. A link that cannot be opened (the key changed,
+ * the Google client is gone) stops the copying with DRIVE_RELINK: it never falls back to the
+ * settings, which may be another account's Drive.
+ */
+export async function driveCredentials(env: NodeJS.ProcessEnv = process.env, db: SupabaseClient | null = serverDb()): Promise<DriveCredentials | null> {
+  if (db) {
+    const { data, error } = await db.rpc('drive_link_secret');
+    if (error && !missingFunction(error)) throw new Error('Google Drive link could not be read');
+    const link = error ? null : driveLinkSecret.safeParse(data);
+    if (link && !link.success) throw new Error('Google Drive link could not be read');
+    if (link?.data) {
+      const key = driveLinkKey(env);
+      const client = driveOAuthClient(env);
+      const refreshToken = key ? unseal(link.data.sealed, key, 'token') : null;
+      if (!client || !refreshToken || !folderIdPattern.test(link.data.folder_id)) throw new Error(DRIVE_RELINK);
+      knownVaultFolderIds.add(link.data.folder_id);
+      return { rootFolderId: link.data.folder_id, ...client, refreshToken };
+    }
+  }
+  return isDriveConfigured(env) ? getDriveCredentials(env) : null;
+}
+
+/** Is any Drive sign-in there, even one to be made again? The copying then runs and says what is wrong. */
+export async function driveIsOn(env: NodeJS.ProcessEnv = process.env, db: SupabaseClient | null = serverDb()): Promise<boolean> {
+  return driveCredentials(env, db).then((creds) => creds !== null, () => true);
+}
+
+export type { DriveState };
+
+export interface DriveInfo {
+  state: DriveState;
+  /** May connect and disconnect. */
+  owner: boolean;
+  accountEmail: string | null;
+  connectedAt: string | null;
+  /** The database can keep a button's link (009 is there): else the button is not offered yet. */
+  ready: boolean;
+}
+
+/** What a page says about Drive, read as the signed-in person (no token is read). */
+export async function driveInfo(db: SupabaseClient, env: NodeJS.ProcessEnv = process.env): Promise<DriveInfo> {
+  const { data, error } = await db.rpc('drive_link_status');
+  const status = error ? null : driveLinkStatus.safeParse(data);
+  const known = status?.success ? status.data : null;
+  return {
+    state: known?.linked ? 'button' : isDriveConfigured(env) ? 'settings' : 'off',
+    owner: known?.owner ?? false,
+    accountEmail: known?.linked ? (known.account_email ?? null) : null,
+    connectedAt: known?.linked ? (known.connected_at ?? null) : null,
+    ready: known !== null,
+  };
+}
+
+export async function driveState(db: SupabaseClient, env: NodeJS.ProcessEnv = process.env): Promise<DriveState> {
+  return (await driveInfo(db, env)).state;
+}
+
+/** The sign-in for one copy: the one given, else the one in force, else the settings' own error. */
+async function signIn(creds?: DriveCredentials): Promise<DriveCredentials> {
+  return creds ?? (await driveCredentials()) ?? getDriveCredentials();
 }
 
 /**
@@ -478,9 +568,9 @@ export async function uploadFileToVaultFolder(params: {
     mimeType,
     bytes,
     preventOverwrite = true,
-    creds = getDriveCredentials(),
     fetchImpl = fetch,
   } = params;
+  const creds = await signIn(params.creds);
 
   const token = await getDriveAccessToken(creds, fetchImpl);
   const { folderId, folderPath } = await ensureVaultFolderPath(folderSegments, creds, token, fetchImpl);
@@ -557,7 +647,7 @@ export async function archiveInvoiceDocumentToDrive(
 ): Promise<InvoiceArchiveResult> {
   const { invoice, delivery } = doc;
   try {
-    const creds = options.creds ?? getDriveCredentials();
+    const creds = await signIn(options.creds);
     const fetchImpl = options.fetchImpl ?? fetch;
     const { fyFolder, monthFolder } = getVaultPeriodFolders(invoice.invoice_date);
     const invoiceCategory: VaultCategory =
@@ -664,11 +754,11 @@ export function triggerInvoiceArchiveAsync(
   invoiceId: string,
   options: { creds?: DriveCredentials; fetchImpl?: typeof fetch } = {},
 ): Promise<InvoiceArchiveResult | null> {
-  if (!options.creds && !isDriveConfigured()) {
-    return Promise.resolve(null);
-  }
-
-  return archiveInvoiceById(db, invoiceId, options).catch(() => null);
+  return (async () => {
+    // Not set up at all: nothing to try. A link to be made again is tried, and the bill waits.
+    if (!options.creds && !(await driveIsOn())) return null;
+    return archiveInvoiceById(db, invoiceId, options);
+  })().catch(() => null);
 }
 
 /**

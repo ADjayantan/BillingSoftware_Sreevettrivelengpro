@@ -5,9 +5,10 @@ For the next AI coding agent. `AGENTS.md` holds the rules every agent keeps; rea
 ## Where it stands
 
 - **Live** (read by Claude on 26 Nov, read-only): the site `studflow-six.vercel.app` runs commit `64ed469`; GitHub `main` is `64ed469` too. Antigravity made `f71a1e3` (fixes) and `64ed469` (loading shell, link prefetch, sign-in key cache, region bom1) and deployed both.
-- **Live database** `studflow-production`: migrations 001–008, two owner logins, the Company page filled, public sign-ups off, no bills. 001–008 are applied: a change of schema is `009_*.sql` or later.
+- **Live database** `studflow-production`: migrations 001–008, two owner logins, the Company page filled, public sign-ups off, no bills. 001–008 are applied; `009_drive_link.sql` is written and waits for the owner's yes; the next change of schema is `010_*.sql`.
 - **Not ready for the first bill:** the INV and DC counters are not opened (`specs/golive-runbook.md`, section 3). Billing is refused until the owner gives the last numbers of the paper book (or 0) and says yes to writing them; a bill saved before that waits on the device and becomes real the moment the counters open.
-- Whether the Vercel project now deploys on a push is not known (the last deploys carry commit ids). Find out before the next push: a deploy must never come before its migration.
+- A push does not deploy: pushing `3fff5dc` started no Vercel deployment, and GitHub shows no Vercel status for any commit (the project is not connected to Git; deploys are made with the CLI).
+- **Connect Google Drive from the Company page** (`specs/drive-button.md`, owner: "You decide"): built after `3fff5dc`, with migration `009_drive_link.sql`; not committed, not on live. Before it works on live: 009 on live, a deploy, the Google OAuth client allowing `https://studflow-six.vercel.app/api/drive/callback` (a "Web application" client), its consent screen "In production", and `CRON_SECRET` of at least 32 characters. Until then the four Drive settings saved on Vercel on 24 Nov keep working as before.
 - After `5bdb1d2` (25 Nov), each approved by the owner: the new look part 1 (`specs/new-look.md`, migration 008); the clean look ("AJIO as the reference"); what each company owes on Customers.
 - **The PC app** (`desktop/`, `specs/desktop-app.md`, owner: "2 ok da. certificate la vanga vena da macha. ana ithu security ni enna panna num panni du"): built in this folder on 26 Nov and **not committed**. `StudFlow-Setup.exe` 1.0.0 (SHA-256 in `desktop/README.md`) is installed on the owner's PC and opens the live sign-in page. Its Print goes straight to the printer kept for A4 or A5 once the web part (print button, mic message, `src/lib/desktop.ts`) is deployed; until then Print opens the Windows print window.
 - Checked on 26 Nov after the PC app: the root suite, database tests, lint, typecheck, build; in the practice copy, inside the program: the keyboard walk 42, the cloud-down walk 13, the program's own checks 21; the keyboard walk in Edge 42; `desktop/scripts/check-exe.sh`, 19 locks of the built exe. Not checked: the owner's real printer, phone, and Google Drive.
@@ -38,7 +39,7 @@ Answers in simple Tanglish, short. Not a software person: show a picture of real
 ## Waiting, only when the owner says so
 
 1. INV and DC counters: the last numbers of the paper book (or 0), then the runbook's block on live.
-2. Commit and push the PC app and its web part; deploy the web part.
+2. Commit and push the Drive button; migration 009 on live; deploy (this also brings the PC app's straight printing); then the owner's Google Cloud steps for the button.
 3. Hosting: Vercel Hobby forbids a company's use. Netlify Free (hard monthly stop) or Vercel Pro; not decided.
 4. One real A4 and one real A5 print from the PC app on the shop printer; the owner's phone; the real Google Drive.
 

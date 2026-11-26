@@ -1,7 +1,7 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
 import { verifyCronAuth } from '@/app/api/cron/weekly-backup/route';
-import { isDriveConfigured } from '@/lib/drive-backup';
+import { driveIsOn } from '@/lib/drive-backup';
 import { monthName } from '@/lib/india';
 import { runBooks } from '@/lib/month-books';
 import { sendTelegramAlert } from '@/lib/telegram';
@@ -15,7 +15,7 @@ async function handleCron(request: Request): Promise<NextResponse> {
     const [status, code, message] = auth === 'unconfigured' ? [503, 'NOT_READY', 'CRON_SECRET is not configured on the server'] as const : [401, 'UNAUTHENTICATED', 'Valid cron bearer token required'] as const;
     return NextResponse.json({ error: { code, message } }, { status, headers: NO_STORE });
   }
-  if (!isDriveConfigured()) return NextResponse.json({ data: { written: [], failed: [], off: true } }, { headers: NO_STORE });
+  if (!(await driveIsOn())) return NextResponse.json({ data: { written: [], failed: [], off: true } }, { headers: NO_STORE });
   try {
     const runs = await runBooks({ force: true, budgetMs: 200_000 });
     const named = (outcome: 'written' | 'failed'): string[] => runs.filter((run) => run.outcome === outcome).map((run) => run.month.slice(0, 7));

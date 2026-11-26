@@ -1,5 +1,5 @@
 import { parse, route } from '@/lib/api/http';
-import { isDriveConfigured } from '@/lib/drive-backup';
+import { driveState } from '@/lib/drive-backup';
 import { booksLater } from '@/lib/month-books';
 import { monthParam } from '@/lib/schemas/books';
 
@@ -8,7 +8,7 @@ export const POST = route<{ month: string }>(async ({ supabase, params }) => {
   const month = parse(monthParam, params.month);
   const { error } = await supabase.rpc('book_retry', { p_month: month });
   if (error) throw error;
-  if (!isDriveConfigured()) return { state: 'off' };
+  if ((await driveState(supabase)) === 'off') return { state: 'off' };
   booksLater({ month, force: true });
   return { state: 'started' };
 });

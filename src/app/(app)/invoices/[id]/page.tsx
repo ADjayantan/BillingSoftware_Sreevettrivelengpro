@@ -10,7 +10,7 @@ import { formatDate, istDate, stateLabel } from '@/lib/india';
 import { invoiceMessages, loadInvoice } from '@/lib/load-invoice';
 import { decimalToPaise, formatInr } from '@/lib/money';
 import { buildDocuments } from '@/lib/print-documents';
-import { CancelBill, Dispatch, Happened, RecordMoney } from './actions-panel';
+import { CancelBill, Dispatch, EditBill, Happened, RecordMoney } from './actions-panel';
 
 export default async function InvoicePage({ params }: { params: Promise<{ id: string }> }) {
   const doc = await loadInvoice(params);
@@ -48,6 +48,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
           </section>
           <div className="grid grid-cols-2 gap-2.5">
             {balance > 0 ? <RecordMoney key={invoice.amount_paid} invoiceId={invoice.id} invoiceNo={invoice.invoice_no} balancePaise={balance} /> : null}
+            {cancelled ? null : <EditBill key={invoice.grand_total} doc={doc} />}
             <span className="flex max-[26rem]:col-span-2">
               <Link className="btn flex-1 rounded-r-none border-r-0 px-3 whitespace-nowrap" href={`/invoices/${invoice.id}/print?paper=a4`}><Icon name="print" />Print A4</Link>
               <Link className="btn rounded-l-none px-3" href={`/invoices/${invoice.id}/print?paper=a5`}>A5</Link>

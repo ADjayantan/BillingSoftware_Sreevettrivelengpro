@@ -92,6 +92,25 @@ export const billDraft = z
 export type BillDraft = z.infer<typeof billDraft>;
 export type BillDraftInput = z.input<typeof billDraft>;
 
+/** What the device sends when editing an issued bill in place. */
+export const editBillInput = z
+  .object({
+    due_date: c.isoDate,
+    po_no: c.optionalText(40),
+    po_date: c.isoDate.nullish().transform((value) => value ?? null),
+    notes: c.optionalText(1000),
+    lines: z.array(draftLine).min(1, 'Add at least one line').max(497),
+    packing: c.rupees.default('0'),
+    freight: c.rupees.default('0'),
+    freight_paid_by: z.enum(['seller', 'buyer_to_pay']).default('seller'),
+    delivery_taxable: z.boolean().default(true),
+    charges_gst_rate: c.gstRate.nullable().default(null),
+    expected_total_paise: z.number().int().nonnegative(),
+  })
+  .refine((draft) => draft.po_no !== null || draft.po_date === null, { path: ['po_no'], message: 'Type the P.O. number too' });
+export type EditBill = z.infer<typeof editBillInput>;
+export type EditBillInput = z.input<typeof editBillInput>;
+
 export const syncResult = z.object({
   invoice_id: c.id,
   invoice_no: z.string(),
@@ -187,6 +206,7 @@ export const invoiceRow = z.object({
 });
 export const invoiceItemRow = z.object({
   line_no: z.number(),
+  stud_item_id: c.id.nullable().optional(),
   description: z.string(),
   hsn_sac: z.string(),
   qty_pieces: z.number().nullable(),

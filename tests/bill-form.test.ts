@@ -469,3 +469,106 @@ describe('the goods of the last bill again', () => {
     expect(form.lines[0]).toMatchObject({ text: 'Threading MS-M8-45-FT', hsn: '998873', gst: '', rate: '0.8' });
   });
 });
+
+describe('editing an issued bill and optional packing/delivery defaults', () => {
+  it('defaults packing and freight to 0 when left empty, and reconstructs an issued bill without duplicating charge lines', () => {
+    const base = bill([f.typeGst({ ...blank(), text: 'MS M12 x 75 stud', quantity: '100', rate: '15' }, '18')]);
+    const preview = f.previewBill(base);
+    if ('problem' in preview) throw new Error(preview.problem);
+    expect(f.toDraft(base, preview.bill)).toMatchObject({ packing: '0', freight: '0', freight_paid_by: 'seller', delivery_taxable: true });
+
+    const doc = {
+      invoice: {
+        id: '00000000-0000-4000-8000-000000000130',
+        invoice_no: 'INV/26-27/0130',
+        client_temp_id: TEMP,
+        bill_type: 'supply' as const,
+        customer_id: customer.id,
+        invoice_date: '2026-11-18',
+        due_date: '2026-11-25',
+        place_of_supply: '33',
+        is_sez: false,
+        customer_snapshot: { name: customer.name, gstin: null, address: 'Coimbatore', state_code: '33', phone: null, is_sez: false },
+        supplier_snapshot: { legal_name: 'Demo', tagline: null, gstin: '33AAAAA0000A1Z5', address: 'CBE', factory_address: null, state_code: '33', phone: null, office_phone: null, email: null, bank_name: null, bank_branch: null, bank_account_no: null, bank_ifsc: null },
+        subtotal: '1500.00',
+        packing_charge: '0.00',
+        delivery_charge: '0.00',
+        delivery_taxable: true,
+        cgst: '135.00',
+        sgst: '135.00',
+        igst: '0.00',
+        charges_cgst: '0.00',
+        charges_sgst: '0.00',
+        charges_igst: '0.00',
+        round_off: '0.00',
+        grand_total: '1770.00',
+        amount_paid: '0.00',
+        payment_status: 'unpaid' as const,
+        po_no: 'PO-130',
+        po_date: '2026-11-17',
+        notes: 'Gate 2',
+        cancelled_at: null,
+        cancellation_reason: null,
+      },
+      items: [
+        {
+          line_no: 1,
+          stud_item_id: stud.id,
+          description: 'Stud MS-M8-45-FT',
+          hsn_sac: '731815',
+          qty_pieces: 100,
+          total_weight_kg: '1.775586',
+          billing_unit: 'pcs' as const,
+          unit_rate: '15.000000',
+          tax_rate_percent: '18.00',
+          line_total: '1500.00',
+          cgst_amount: '135.00',
+          sgst_amount: '135.00',
+          igst_amount: '0.00',
+        },
+        {
+          line_no: 2,
+          stud_item_id: null,
+          description: 'Packing charges',
+          hsn_sac: '731815',
+          qty_pieces: 1,
+          total_weight_kg: null,
+          billing_unit: 'pcs' as const,
+          unit_rate: '40.000000',
+          tax_rate_percent: '18.00',
+          line_total: '40.00',
+          cgst_amount: '3.60',
+          sgst_amount: '3.60',
+          igst_amount: '0.00',
+        },
+      ],
+      delivery: {
+        id: '00000000-0000-4000-8000-000000000230',
+        dc_no: 'DC/26-27/0130',
+        dc_date: '2026-11-18',
+        transport_mode: 'transporter' as const,
+        vehicle_no: 'TN38AB1234',
+        driver_name: null,
+        driver_phone: null,
+        lr_number: null,
+        freight_paid_by: 'buyer_to_pay' as const,
+        freight_amount: '300.00',
+        delivery_address: 'Coimbatore',
+        status: 'pending' as const,
+        dispatched_at: null,
+        delivered_at: null,
+      },
+      returns: [],
+      payments: [],
+    };
+
+    const form = (f as unknown as { formFromInvoice: (d: typeof doc) => f.BillForm }).formFromInvoice(doc);
+    expect(form.invoiceDate).toBe('2026-11-18');
+    expect(form.packing).toBe('40');
+    expect(form.freight).toBe('300');
+    expect(form.freightPaidBy).toBe('buyer_to_pay');
+    // Only the goods line + trailing blank line (Packing charges line is restored to form.packing, not duplicated)
+    expect(form.lines).toHaveLength(2);
+    expect(form.lines[0]).toMatchObject({ text: 'Stud MS-M8-45-FT', quantity: '100', rate: '15', gst: '18' });
+  });
+});

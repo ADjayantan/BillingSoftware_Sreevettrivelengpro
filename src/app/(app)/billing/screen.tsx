@@ -696,10 +696,10 @@ function BillEditor({ opened, onNew, onReopen }: {
           {form.type === 'job_work' ? <Lots form={form} onChange={patchReturn} /> : null}
 
           <section data-place="packing" className="px-5 pt-4.5 pb-5" aria-label="Packing and delivery">
-            <Step no={3}>Packing and delivery</Step>
+            <Step no={3} done={amounts !== null} note="Optional · ₹0 by default">Packing and delivery</Step>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <Field label="Packing ₹" hint="Added to the bill"><input className="field num" inputMode="decimal" value={form.packing} onChange={(event) => patch({ packing: event.target.value })} /></Field>
-              <Field label="Freight ₹" hint={buyerPays ? 'On the challan only, not on the bill' : 'Added to the bill'}><input className="field num" inputMode="decimal" value={form.freight} onChange={(event) => patch({ freight: event.target.value })} /></Field>
+              <Field label="Packing ₹" hint="Optional · ₹0 if left blank"><input className="field num" inputMode="decimal" placeholder="0" value={form.packing} onChange={(event) => patch({ packing: event.target.value })} /></Field>
+              <Field label="Freight ₹" hint={buyerPays ? 'Optional · ₹0 if left blank (on challan only)' : 'Optional · ₹0 if left blank'}><input className="field num" inputMode="decimal" placeholder="0" value={form.freight} onChange={(event) => patch({ freight: event.target.value })} /></Field>
               <Field label="Who pays the freight">
                 <select className="field" value={form.freightPaidBy} onChange={(event) => patch({ freightPaidBy: event.target.value === 'buyer_to_pay' ? 'buyer_to_pay' : 'seller' })}>
                   <option value="seller">We pay, add to bill</option><option value="buyer_to_pay">Customer pays the driver</option>

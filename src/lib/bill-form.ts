@@ -1,11 +1,11 @@
 /** What the billing screen holds while a bill is typed, and how it becomes a draft. Pure. */
 import { BillingMathError, lotBalance, weightForPieces, wholePiecesForWeight, type LotBalance, type WeightSpec } from './billing-math';
-import { composeBill, DraftError, type ComposedBill } from './bill-draft';
+import { CHARGE_LINE, composeBill, DraftError, type ComposedBill } from './bill-draft';
 import { reviveCustomer, type CustomerForm } from './customer-form';
 import { addDays } from './india';
 import { trimZeros } from './money';
 import { isService, lineText, plainPercent, productCode, revivedProduct, typedProductNo } from './products';
-import type { BillDraftInput } from './schemas/invoices';
+import type { BillDraftInput, EditBillInput, InvoiceDocument } from './schemas/invoices';
 import type { Customer, JobWorkLot, StudItem } from './schemas/masters';
 
 export type BillType = 'supply' | 'job_work';
@@ -21,6 +21,10 @@ export interface FormLine {
   unit: 'pcs' | 'kg';
   quantity: string;
   rate: string;
+  /** Preserved from an existing invoice item during in-place edit when the full product row was not re-picked. */
+  savedStudId?: string | null;
+  savedPieces?: number | null;
+  savedWeightKg?: string | null;
 }
 
 export interface FormReturn {
@@ -158,9 +162,20 @@ export function changeType(form: BillForm, type: BillType): BillForm {
 
 /** The line without its product: what the product filled goes with it, what was typed stays. */
 function dropProduct(line: FormLine, type: BillType): FormLine {
-  if (!line.stud) return line;
-  if (!fillsLine(line.stud, type)) return { ...line, stud: null };
-  return { ...line, stud: null, hsn: HSN[type], unit: 'pcs', rate: '', ...(line.gstFrom === 'product' ? { gst: '', gstFrom: '' } : {}) };
+  const clean: FormLine = {
+    key: line.key,
+    stud: line.stud,
+    text: line.text,
+    hsn: line.hsn,
+    gst: line.gst,
+    gstFrom: line.gstFrom,
+    unit: line.unit,
+    quantity: line.quantity,
+    rate: line.rate,
+  };
+  if (!clean.stud) return clean;
+  if (!fillsLine(clean.stud, type)) return { ...clean, stud: null };
+  return { ...clean, stud: null, hsn: HSN[type], unit: 'pcs', rate: '', ...(clean.gstFrom === 'product' ? { gst: '', gstFrom: '' } : {}) };
 }
 
 export function pickStud(line: FormLine, stud: StudItem, type: BillType): FormLine {
@@ -234,14 +249,31 @@ const weightSpec = (stud: StudItem): WeightSpec => ({
 
 /** The other measurement of a product line, where its weight is known: kg for pieces, pieces for kg. */
 export function supporting(line: FormLine): { pieces: number | null; weightKg: string | null } {
-  if (!line.stud || line.stud.unit_weight_kg === null || line.quantity === '') return { pieces: null, weightKg: null };
-  try {
-    if (line.unit === 'pcs') return { pieces: null, weightKg: weightForPieces(weightSpec(line.stud), Number(line.quantity)) };
-    const pieces = wholePiecesForWeight(weightSpec(line.stud), line.quantity);
-    return { pieces: pieces > 0 ? pieces : null, weightKg: null };
-  } catch {
-    return { pieces: null, weightKg: null };
+  if (line.quantity === '') return { pieces: null, weightKg: null };
+  if (line.stud && line.stud.unit_weight_kg !== null) {
+    try {
+      if (line.unit === 'pcs') return { pieces: null, weightKg: weightForPieces(weightSpec(line.stud), Number(line.quantity)) };
+      const pieces = wholePiecesForWeight(weightSpec(line.stud), line.quantity);
+      return { pieces: pieces > 0 ? pieces : null, weightKg: null };
+    } catch {
+      return { pieces: null, weightKg: null };
+    }
   }
+  if (line.unit === 'pcs' && line.savedWeightKg && line.savedPieces && line.savedPieces > 0) {
+    const qty = Number(line.quantity);
+    if (Number.isInteger(qty) && qty > 0) {
+      const scaled = (Number(line.savedWeightKg) * qty) / line.savedPieces;
+      if (Number.isFinite(scaled) && scaled > 0) return { pieces: null, weightKg: scaled.toFixed(6) };
+    }
+  }
+  if (line.unit === 'kg' && line.savedPieces && line.savedWeightKg && Number(line.savedWeightKg) > 0) {
+    const qty = Number(line.quantity);
+    if (Number.isFinite(qty) && qty > 0) {
+      const scaled = Math.round((line.savedPieces * qty) / Number(line.savedWeightKg));
+      if (scaled > 0) return { pieces: scaled, weightKg: null };
+    }
+  }
+  return { pieces: null, weightKg: null };
 }
 
 /** Goods whose driver the customer pays do not go in our own vehicle, unless somebody says so. */
@@ -268,7 +300,7 @@ const draftLines = (form: BillForm) =>
   form.lines.filter((line) => !isBlank(line)).map((line) => {
     const other = supporting(line);
     return {
-      stud_item_id: line.stud?.id ?? null, description: line.text.trim(), hsn_sac: line.hsn.trim(), billing_unit: line.unit, quantity: line.quantity.trim(),
+      stud_item_id: line.stud?.id ?? line.savedStudId ?? null, description: line.text.trim(), hsn_sac: line.hsn.trim(), billing_unit: line.unit, quantity: line.quantity.trim(),
       pieces: other.pieces, weight_kg: other.weightKg, rate: line.rate.trim(), gst_rate: line.gst.trim(),
     };
   });
@@ -365,6 +397,92 @@ export function toDraft(form: BillForm, bill: ComposedBill): BillDraftInput {
             }];
           }),
     paid_now: form.paid.trim() === '' ? null : { amount: form.paid.trim(), mode: form.paidMode as 'cash' },
+    expected_total_paise: bill.detail.amounts.grand_total_paise,
+  };
+}
+
+/** Reconstructs an editable BillForm from an issued InvoiceDocument without duplicating charge lines. */
+export function formFromInvoice(doc: InvoiceDocument, today = doc.invoice.invoice_date): BillForm {
+  const { invoice, items, delivery } = doc;
+  const snap = invoice.customer_snapshot;
+  const customer: Customer = {
+    id: invoice.customer_id,
+    name: snap.name,
+    gstin: snap.gstin,
+    phone: snap.phone,
+    state_code: snap.state_code,
+    is_sez: snap.is_sez,
+    credit_days: 0,
+    address: snap.address,
+    opening_balance: '0.00',
+    is_active: true,
+  };
+
+  let packingAmt = Number(invoice.packing_charge) > 0 ? trimZeros(invoice.packing_charge) : '';
+  let freightAmt = delivery && Number(delivery.freight_amount) > 0 ? trimZeros(delivery.freight_amount) : Number(invoice.delivery_charge) > 0 ? trimZeros(invoice.delivery_charge) : '';
+  let deliveryTaxable = invoice.delivery_taxable;
+  let chargesGstRate = '';
+
+  const goodsItems = items.filter((item) => {
+    if (item.description === CHARGE_LINE.packing) {
+      if (!packingAmt && Number(item.unit_rate) > 0) packingAmt = trimZeros(item.unit_rate);
+      chargesGstRate = trimZeros(item.tax_rate_percent);
+      return false;
+    }
+    if (item.description === CHARGE_LINE.delivery) {
+      if (!freightAmt && Number(item.unit_rate) > 0) freightAmt = trimZeros(item.unit_rate);
+      chargesGstRate = chargesGstRate || trimZeros(item.tax_rate_percent);
+      return false;
+    }
+    if (item.description === CHARGE_LINE.recovered) {
+      if (!freightAmt && Number(item.unit_rate) > 0) freightAmt = trimZeros(item.unit_rate);
+      deliveryTaxable = false;
+      return false;
+    }
+    return true;
+  });
+
+  const lines: FormLine[] = goodsItems.map((item, idx) => ({
+    key: idx + 1,
+    stud: null,
+    text: item.description,
+    hsn: item.hsn_sac,
+    gst: trimZeros(item.tax_rate_percent),
+    gstFrom: 'hand',
+    unit: item.billing_unit,
+    quantity: item.billing_unit === 'pcs' ? String(item.qty_pieces ?? 1) : trimZeros(item.total_weight_kg ?? '1'),
+    rate: trimZeros(item.unit_rate),
+    savedStudId: item.stud_item_id ?? null,
+    savedPieces: item.qty_pieces,
+    savedWeightKg: item.total_weight_kg,
+  }));
+
+  return {
+    ...newBill(invoice.client_temp_id, today, invoice.bill_type),
+    customer,
+    customerText: customer.name,
+    invoiceDate: invoice.invoice_date,
+    dueDate: invoice.due_date,
+    poNo: invoice.po_no ?? '',
+    poDate: invoice.po_date ?? '',
+    notes: invoice.notes ?? '',
+    lines: withTrailingBlank(lines.length > 0 ? lines : [blankLine(1, invoice.bill_type)], invoice.bill_type),
+    packing: packingAmt,
+    freight: freightAmt,
+    freightPaidBy: delivery?.freight_paid_by ?? 'seller',
+    deliveryTaxable,
+    chargesRate: chargesGstRate,
+  };
+}
+
+export function toEditDraft(form: BillForm, bill: ComposedBill): EditBillInput {
+  return {
+    due_date: dueDateOf(form),
+    po_no: form.poNo.trim(),
+    po_date: form.poNo.trim() === '' ? null : form.poDate || null,
+    notes: form.notes,
+    lines: draftLines(form),
+    ...charges(form),
     expected_total_paise: bill.detail.amounts.grand_total_paise,
   };
 }

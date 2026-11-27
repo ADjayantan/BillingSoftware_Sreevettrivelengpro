@@ -25,7 +25,7 @@ export const COMPANY_COLUMNS =
 const INVOICE_COLUMNS =
   'id,invoice_no,client_temp_id,bill_type,customer_id,invoice_date,due_date,place_of_supply,is_sez,customer_snapshot,supplier_snapshot,subtotal::text,packing_charge::text,delivery_charge::text,delivery_taxable,cgst::text,sgst::text,igst::text,charges_cgst::text,charges_sgst::text,charges_igst::text,round_off::text,grand_total::text,amount_paid::text,payment_status,po_no,po_date,notes,cancelled_at,cancellation_reason';
 const ITEM_COLUMNS =
-  'line_no,description,hsn_sac,qty_pieces,total_weight_kg::text,billing_unit,unit_rate::text,tax_rate_percent::text,line_total::text,cgst_amount::text,sgst_amount::text,igst_amount::text';
+  'line_no,stud_item_id,description,hsn_sac,qty_pieces,total_weight_kg::text,billing_unit,unit_rate::text,tax_rate_percent::text,line_total::text,cgst_amount::text,sgst_amount::text,igst_amount::text';
 export const DELIVERY_COLUMNS =
   'id,dc_no,dc_date,transport_mode,vehicle_no,driver_name,driver_phone,lr_number,freight_paid_by,freight_amount::text,delivery_address,status,dispatched_at,delivered_at';
 const RETURN_COLUMNS =

@@ -460,4 +460,83 @@ describe('billing', () => {
       await bare.close();
     }
   });
+
+  it('edits an existing bill in place without changing its number, original date or later bills, and defaults packing/delivery to zero', async () => {
+    const first = await sync({ ...draft(), invoice_date: '2026-11-18', due_date: '2026-11-25', po_no: 'PO-130' });
+    const second = await sync({ ...draft(), invoice_date: '2026-11-21', due_date: '2026-11-28', po_no: 'PO-131' });
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+
+    const route = await import('@/app/api/invoices/[id]/route');
+    const edit = (invoiceId: unknown, json: unknown) => call((route as { PUT: typeof route.GET }).PUT, { method: 'PUT', params: { id: invoiceId as string }, json });
+
+    // Edit first bill: 200 pcs at Rs 15 (3000) + new item 50 pcs at Rs 10 (500) = 3500 subtotal, 18% GST = 630 -> 4130.00 total.
+    // Packing and freight omitted/blank -> default to 0.
+    const updated = await edit(first.data.invoice_id, {
+      due_date: '2026-11-25',
+      po_no: 'PO-130-REV',
+      po_date: null,
+      notes: 'Revised qty',
+      lines: [
+        { ...draft().lines[0], quantity: '200', rate: '15' },
+        { stud_item_id: null, description: 'Hex nut M16', hsn_sac: '731816', billing_unit: 'pcs', quantity: '50', pieces: 50, weight_kg: null, rate: '10', gst_rate: '18' },
+      ],
+      expected_total_paise: 413_000,
+    });
+    expect(updated).toMatchObject({
+      status: 200,
+      data: { invoice_id: first.data.invoice_id, invoice_no: first.data.invoice_no, dc_no: first.data.dc_no },
+    });
+
+    const doc1 = (await read(first.data.invoice_id)).data;
+    expect(doc1.invoice).toMatchObject({
+      id: first.data.invoice_id,
+      invoice_no: first.data.invoice_no,
+      invoice_date: '2026-11-18',
+      due_date: '2026-11-25',
+      po_no: 'PO-130-REV',
+      notes: 'Revised qty',
+      subtotal: '3500.00',
+      packing_charge: '0.00',
+      delivery_charge: '0.00',
+      cgst: '315.00',
+      sgst: '315.00',
+      grand_total: '4130.00',
+    });
+    expect(doc1.items).toHaveLength(2);
+    expect((doc1.items as { line_total: string }[]).map((item) => item.line_total)).toEqual(['3000.00', '500.00']);
+
+    // Later bill #2 is completely untouched
+    const doc2 = (await read(second.data.invoice_id)).data;
+    expect(doc2.invoice).toMatchObject({
+      id: second.data.invoice_id,
+      invoice_no: second.data.invoice_no,
+      invoice_date: '2026-11-21',
+      po_no: 'PO-131',
+      grand_total: '1770.00',
+    });
+
+    // Wrong expected_total_paise is refused with 409 TOTAL_CHANGED
+    expect(
+      await edit(first.data.invoice_id, {
+        due_date: '2026-11-25',
+        lines: [{ ...draft().lines[0], quantity: '200', rate: '15' }],
+        expected_total_paise: 100,
+      }),
+    ).toMatchObject({ status: 409, error: { code: 'TOTAL_CHANGED' } });
+
+    // Record a partial receipt of Rs 1,000 on bill #1, then edit bill #1: refuses total < 1000, updates payment_status when total >= 1000
+    const { POST: pay } = await import('@/app/api/invoices/[id]/payments/route');
+    await call(pay, {
+      params: { id: first.data.invoice_id as string },
+      json: { client_receipt_id: '55555555-5555-4555-8555-555555555555', amount: '1000', received_on: '2026-11-21', mode: 'upi' },
+    });
+    expect(
+      await edit(first.data.invoice_id, {
+        due_date: '2026-11-25',
+        lines: [{ ...draft().lines[0], quantity: '10', rate: '15' }], // Rs 177 < Rs 1000 paid
+        expected_total_paise: 17_700,
+      }),
+    ).toMatchObject({ status: 422, error: { message: expect.stringMatching(/already received/i) } });
+  });
 });

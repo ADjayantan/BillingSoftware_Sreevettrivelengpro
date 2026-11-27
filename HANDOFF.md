@@ -16,8 +16,6 @@ For the next AI coding agent. `AGENTS.md` holds the rules every agent keeps; rea
 - Checked on 26 Nov after the PC app: the root suite, database tests, lint, typecheck, build; in the practice copy, inside the program: the keyboard walk 42, the cloud-down walk 13, the program's own checks 21; the keyboard walk in Edge 42; `desktop/scripts/check-exe.sh`, 19 locks of the built exe. After the Drive button: `npm test` 1216 (the 260 database tests among them), lint, typecheck, build; in the practice copy the Drive section 7 checks and the keyboard walk 42. On live after the deploy: the sign-in page answers 200, `/api/drive/*` 401 without a session. Not checked: the owner's real printer, phone, and the button's own Google Drive link.
 - The walks now wait until React has taken a control over and the grey loading shell has gone: since `64ed469` pages arrive in parts, and the Edge walk on `main` stopped at "Record money" before that.
 - The print design is approved by the owner ("Nalla irukku"). Do not redesign the bill.
-- `handoff/ai-fill-fix.patch`: an unfinished change of another session (retired Gemini model, time limit, built-in parser). Run all checks before keeping it.
-- Known and not fixed, because that patch owns the file: the built-in parser of dealer messages (`src/lib/gemini.ts`) drops the first grade when it stands on the same line as "Rs/kg:".
 - Money for dues from before the software is written by lowering the customer's opening balance: no receipt exists for it yet (part 3).
 
 ## Never

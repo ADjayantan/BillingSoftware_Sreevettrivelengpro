@@ -84,6 +84,24 @@ export type ParseBillResponse = z.infer<typeof ParseBillResponseSchema>;
 export type ParseBillItem = z.infer<typeof ParseBillItemSchema>;
 export type ParseBillWarning = z.infer<typeof ParseBillWarningSchema>;
 
+/** Ours to say, never the AI's: Gemini failed, and the built-in parser wrote this draft. */
+const AI_UNAVAILABLE = { code: 'AI_UNAVAILABLE', path: 'transcript' } as const;
+export type ParseBillReply = Omit<ParseBillResponse, 'warnings'> & {
+  warnings: (ParseBillWarning | typeof AI_UNAVAILABLE)[];
+};
+
+/** There is no draft to show. The message goes to the owner as it stands. */
+export class NoDraftError extends Error {
+  constructor(readonly code: 'AI_UNAVAILABLE' | 'NOT_UNDERSTOOD') {
+    super(
+      code === 'AI_UNAVAILABLE'
+        ? 'AI fill is not answering now. Try again in a minute, or type the bill below.'
+        : 'No goods were found in this note. Say the size and the quantity, or type the bill below.',
+    );
+    this.name = 'NoDraftError';
+  }
+}
+
 export const ConfirmedRateSchema = z
   .object({
     amount_inr: z.string().regex(/^\d+(\.\d{1,4})?$/),
@@ -211,13 +229,13 @@ STRICT RULES:
    "out_of_stock", "quote_pending", "illegible_amount", "ambiguous_grade", "missing_kg_per_rod", or "order_tier_unspecified".`;
 
 // =============================================================================
-// 3. Gemini Flash JSON Client with 3-Attempt Exponential Backoff Retry
+// 3. Gemini Flash JSON Client with Exponential Backoff Retry and One Time Limit
 // =============================================================================
 
 export class GeminiError extends Error {
   constructor(
     message: string,
-    readonly code: 'UNCONFIGURED' | 'UPSTREAM_HTTP' | 'INVALID_JSON' | 'SCHEMA_MISMATCH',
+    readonly code: 'UNCONFIGURED' | 'UPSTREAM_HTTP' | 'NETWORK' | 'TIMEOUT' | 'INVALID_JSON' | 'SCHEMA_MISMATCH',
     readonly status?: number,
   ) {
     super(message);
@@ -234,15 +252,45 @@ export function resolveGeminiApiKey(env: NodeJS.ProcessEnv = process.env): strin
   );
 }
 
+/**
+ * Google's own successor to 2.5 Flash, made for extracting data. (3.8 Flash allows a free key 20
+ * requests a day.) Models get retired, and asking for one by name proves nothing, for a retired one
+ * still answers 200: prove the next with a real generateContent call.
+ */
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
+
+/** The one place the model comes from. `GEMINI_MODEL` changes it without a release. */
+export function resolveGeminiModel(env: NodeJS.ProcessEnv = process.env): string {
+  return env.GEMINI_MODEL?.trim().replace(/^models\//, '') || DEFAULT_MODEL;
+}
+
+/**
+ * For all attempts together. The browser gives up after 30 s and takes that for a lost
+ * connection, so it has to hear from us well before.
+ */
+const TIMEOUT_MS = 15_000;
+
 const RETRYABLE_HTTP_STATUS = new Set([429, 500, 502, 503, 504]);
 
 const sleep = (ms: number): Promise<void> =>
   ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Without being told the shape, Gemini picks names of its own and no answer passes the schema. A
+ * list may be empty here, whatever the schema says: it must not invent goods to fill one.
+ */
+const answerShape = (schema: z.ZodType) =>
+  z.toJSONSchema(schema, {
+    override: ({ jsonSchema }) => {
+      delete jsonSchema.minItems;
+    },
+  });
+
+/**
  * Calls Gemini Flash in strict JSON mode (`responseMimeType: "application/json"`),
- * retries up to 3 attempts with exponential backoff on HTTP 429/503 or network error,
+ * retries up to 5 attempts with exponential backoff on HTTP 429/5xx or network error,
  * and validates the parsed output against the supplied Zod schema.
+ * Every failure is a `GeminiError`: a socket error's own code looks like the database's.
  */
 export async function callGeminiJson<T extends z.ZodType>(options: {
   systemInstruction: string;
@@ -252,7 +300,7 @@ export async function callGeminiJson<T extends z.ZodType>(options: {
   fetchImpl?: typeof fetch;
   maxAttempts?: number;
   baseDelayMs?: number;
-  model?: string;
+  timeoutMs?: number;
 }): Promise<z.output<T>> {
   const apiKey = resolveGeminiApiKey(options.env);
   if (!apiKey) {
@@ -260,13 +308,13 @@ export async function callGeminiJson<T extends z.ZodType>(options: {
   }
 
   const fetchImpl = options.fetchImpl ?? fetch;
-  const maxAttempts = Math.max(1, Math.min(options.maxAttempts ?? 3, 5));
+  const maxAttempts = Math.max(1, Math.min(options.maxAttempts ?? 5, 5));
   const baseDelayMs = options.baseDelayMs ?? 150;
-  const model = options.model ?? 'gemini-2.5-flash';
+  const model = encodeURIComponent(resolveGeminiModel(options.env));
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const signal = AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS);
 
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  for (let attempt = 1; ; attempt += 1) {
     try {
       const response = await fetchImpl(endpoint, {
         method: 'POST',
@@ -286,16 +334,14 @@ export async function callGeminiJson<T extends z.ZodType>(options: {
           ],
           generationConfig: {
             responseMimeType: 'application/json',
+            responseJsonSchema: answerShape(options.schema),
             temperature: 0,
           },
         }),
+        signal,
       });
 
       if (!response.ok) {
-        if (RETRYABLE_HTTP_STATUS.has(response.status) && attempt < maxAttempts) {
-          await sleep(baseDelayMs * 2 ** (attempt - 1));
-          continue;
-        }
         throw new GeminiError(`Gemini API returned HTTP ${response.status}`, 'UPSTREAM_HTTP', response.status);
       }
 
@@ -319,18 +365,17 @@ export async function callGeminiJson<T extends z.ZodType>(options: {
       }
       return parsed.data;
     } catch (error) {
-      lastError = error;
-      if (error instanceof GeminiError && (error.code === 'INVALID_JSON' || error.code === 'SCHEMA_MISMATCH' || error.code === 'UPSTREAM_HTTP')) {
-        throw error;
-      }
-      if (attempt < maxAttempts) {
-        await sleep(baseDelayMs * 2 ** (attempt - 1));
-        continue;
-      }
+      const failure =
+        error instanceof GeminiError
+          ? error
+          : signal.aborted
+            ? new GeminiError('Gemini did not answer in time', 'TIMEOUT')
+            : new GeminiError('Gemini could not be reached', 'NETWORK');
+      const mayPass = failure.code === 'NETWORK' || (failure.status !== undefined && RETRYABLE_HTTP_STATUS.has(failure.status));
+      if (!mayPass || attempt >= maxAttempts) throw failure;
+      await sleep(baseDelayMs * 2 ** (attempt - 1));
     }
   }
-
-  throw lastError instanceof Error ? lastError : new GeminiError('Gemini request failed', 'UPSTREAM_HTTP');
 }
 
 // =============================================================================
@@ -759,6 +804,8 @@ function parseItemFromClause(clause: string): RawDraftItem | null {
     { regex: /\b(each\s+\d+(?:\.\d+)?(?:\s+rupees)?)\b/i },
     // V03 / V10 / V23 / V24 / V25: "13 rupees each", "226 rupees each", "18 each", "15.50 each", "46 each", "76 each", "186 each"
     { regex: /\b(\d+(?:\.\d+)?(?:\s+rupees)?\s+each)\b/i },
+    // The billing screen's own example: "piece-ku 3.10"
+    { regex: /(?<!thousand\s+)\b(piece-ku\s+\d+(?:,\d+)*(?:\.\d+)?)/i },
   ];
 
   for (const pat of ratePatterns) {
@@ -867,11 +914,54 @@ export function extractRawBillDraft(text: string): RawDraftExtraction {
   };
 }
 
+/** What the contract's own notes (specs/ai-voice-test-cases.json) say that no draft quotes. */
+const HARMLESS = new Set(
+  `accounts adhe adhu anga appadiye at bill box call confirm dhaan draft driver edunga evlo exact figure final godown grade inch
+   innum irukku kaasu keep kekkanum kettuttu kg kilo kitta ku kuduppaanga la later length line lines list mattum mudichuttu name
+   namma negotiating new next nu of order ore oru pannitaanga panniten pannunga panren paper party pazhaya pcs piece pieces please
+   podu quote rate rendu said serunga size solren special still supply tharala the then theriyala they two vaanguvaaru wants`.split(/\s+/),
+);
+/** Harmless too, once the bill is for job work. On a supply bill they may mean that it should be. */
+const HARMLESS_IN_JOB_WORK = new Set('avanga dc job kooli labour mudinjudhu rod rods their thread threading velai work'.split(' '));
+
+/**
+ * The built-in parser knows the phrases of 25 sample notes. In any other it can stop at the first
+ * line, or the first of two counts, without noticing, and a bill short of a line is worse than no
+ * draft. But what it did read it quotes word for word. So the draft stands only if nothing is left
+ * of the note, numbers included, beyond words known to change nothing.
+ */
+function readsWholeNote(text: string, draft: ParseBillResponse): boolean {
+  const { delivery } = draft;
+  const quoted = [
+    draft.customer_query,
+    draft.party_dc_no,
+    delivery.delivery_charge?.mention,
+    delivery.packing_charge?.mention,
+    delivery.transport_mention,
+    delivery.vehicle_no,
+    ...draft.items.flatMap((item) => [item.item_query, item.rate_mention]),
+  ];
+  let rest = text;
+  for (const words of quoted) {
+    if (words) rest = rest.replace(words, ' ');
+  }
+  // Counts are quoted as plain digits, whatever was said: "2,000", "irunooru".
+  for (const { quantity } of draft.items) {
+    const counts = [...rest.matchAll(/\d[\d,]*(?:\.\d+)?(?=\s*(?:pieces?|pcs|kilo|kg)\b)/gi)];
+    const count =
+      counts.find(([digits]) => digits.replace(/,/g, '') === quantity) ??
+      TAMIL_NUMBER_WORDS.find(([, digits]) => digits === quantity)?.[0].exec(rest);
+    if (count) rest = `${rest.slice(0, count.index)} ${rest.slice(count.index + count[0].length)}`;
+  }
+  const left = rest.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  return left.every((word) => HARMLESS.has(word) || (draft.bill_type === 'job_work' && HARMLESS_IN_JOB_WORK.has(word)));
+}
+
 /**
  * Full server-side Tanglish/Tamil/English bill draft parser and catalogue resolver.
- * Uses Gemini Flash in JSON mode when configured (or when a custom `fetchImpl` is injected),
- * and deterministically resolves all database foreign keys (`customer_id`, `stud_item_id`)
- * and structured warning paths.
+ * Uses Gemini Flash in JSON mode when configured (or when a custom `fetchImpl` is injected). While
+ * Gemini fails, the built-in parser writes the draft, if it read the whole note. With no key it is
+ * the only reader. Throws `NoDraftError` when there is nothing to show.
  */
 export async function parseBillTranscript(options: {
   text: string;
@@ -879,7 +969,7 @@ export async function parseBillTranscript(options: {
   studItems: readonly ActiveStudRow[];
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
-}): Promise<ParseBillResponse> {
+}): Promise<ParseBillReply> {
   const { text, customers, studItems } = options;
 
   const hasGeminiKey = Boolean(resolveGeminiApiKey(options.env));
@@ -896,16 +986,38 @@ export async function parseBillTranscript(options: {
       })),
     });
 
-    return callGeminiJson({
-      systemInstruction: BILL_EXTRACTOR_SYSTEM_PROMPT,
-      userPrompt: `Catalogue:\n${catalogueSummary}\n\nTranscript:\n${text}`,
-      schema: ParseBillResponseSchema,
-      ...(options.env ? { env: options.env } : {}),
-      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-    });
+    try {
+      return await callGeminiJson({
+        systemInstruction: BILL_EXTRACTOR_SYSTEM_PROMPT,
+        userPrompt: `Catalogue:\n${catalogueSummary}\n\nTranscript:\n${text}`,
+        schema: ParseBillResponseSchema,
+        ...(options.env ? { env: options.env } : {}),
+        ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      });
+    } catch (error) {
+      if (!(error instanceof GeminiError)) throw error;
+      // Codes only: the note names customers.
+      console.error('AI fill: Gemini failed', resolveGeminiModel(options.env), error.code, error.status ?? '');
+      const draft = builtInDraft(text, customers, studItems);
+      if (draft && readsWholeNote(text, draft)) return { ...draft, warnings: [AI_UNAVAILABLE, ...draft.warnings] };
+      const answered = error.code === 'INVALID_JSON' || error.code === 'SCHEMA_MISMATCH';
+      throw new NoDraftError(answered && !draft ? 'NOT_UNDERSTOOD' : 'AI_UNAVAILABLE');
+    }
   }
 
+  const draft = builtInDraft(text, customers, studItems);
+  if (!draft) throw new NoDraftError('NOT_UNDERSTOOD');
+  return draft;
+}
+
+/** The draft made without any AI, or null when it finds no goods in the note. */
+function builtInDraft(
+  text: string,
+  customers: readonly ActiveCustomerRow[],
+  studItems: readonly ActiveStudRow[],
+): ParseBillResponse | null {
   const raw = extractRawBillDraft(text);
+  if (raw.items.length === 0) return null;
   const warnings: ParseBillWarning[] = [];
 
   const customer_id = resolveCustomerFromCatalogue(raw.customer_query, customers);
@@ -1046,13 +1158,13 @@ export async function parseDealerRateMessage(options: {
       remainingLine = remainingLine.replace(tierMatch[0], ' ');
     }
 
-    // Split remaining line by pipe "|", slash " / " (between grade segments), semicolon, period, or comma before a grade
+    // Split remaining line by pipe "|", slash " / " (between grade segments), semicolon, period, or comma/colon before a grade
     const segments = remainingLine
       .replace(/^Sir\s+mill\s+list\s+\d+\/\d+:\s*/i, '')
       .replace(/^Fwd\s+frm\s+counter:\s*/i, '')
       .replace(/^[🔔👋🙏⬇️🔥]+\s*/u, '')
       .replace(/^Innaiku\s+konjam\s+down\s+sir\s*[⬇️]*\s*/iu, '')
-      .split(/\s*(?:\||;|\.\s+|\s+\/\s+(?=(?:316\s*ss|304\s*ss|s\.?s\.?[\s-]*304|s\.?s\.?[\s-]*316|brs|brass|en|ms)\b)|,(?=\s*(?:M\.?\s*S\.?|EN[\s-]*8|EN[\s-]*19|S\.?\s*S\.?(?:[\s-]*304|[\s-]*316)?|304\s*S\.?\s*S\.?|316\s*S\.?\s*S\.?|Brass|BRS)\b))\s*/i)
+      .split(/\s*(?:\||;|\.\s+|\s+\/\s+(?=(?:316\s*ss|304\s*ss|s\.?s\.?[\s-]*304|s\.?s\.?[\s-]*316|brs|brass|en|ms)\b)|[,:](?=\s*(?:M\.?\s*S\.?|EN[\s-]*8|EN[\s-]*19|S\.?\s*S\.?(?:[\s-]*304|[\s-]*316)?|304\s*S\.?\s*S\.?|316\s*S\.?\s*S\.?|Brass|BRS)\b))\s*/i)
       .map((s) => s.trim().replace(/[.]+$/, '').trim())
       .filter(Boolean);
 

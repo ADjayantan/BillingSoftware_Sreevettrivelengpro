@@ -3,7 +3,7 @@ import { isAuthRetryableFetchError } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { ApiError, body, toApiError, unavailable } from '@/lib/api/http';
 import {
-  GeminiError,
+  NoDraftError,
   ParseBillRequestSchema,
   parseBillTranscript,
   type ActiveCustomerRow,
@@ -59,11 +59,11 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json(result, { status: 200, headers: NO_STORE });
   } catch (error) {
-    if (error instanceof GeminiError) {
-      const status = error.code === 'SCHEMA_MISMATCH' || error.code === 'INVALID_JSON' ? 422 : 503;
+    if (error instanceof NoDraftError) {
+      // Never 502, 503 or 504: to the browser those say that the cloud itself is down.
       return NextResponse.json(
         { error: { code: error.code, message: error.message } },
-        { status, headers: NO_STORE },
+        { status: 422, headers: NO_STORE },
       );
     }
     const apiErr = toApiError(error);

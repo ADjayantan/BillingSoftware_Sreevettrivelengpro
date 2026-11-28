@@ -1,3 +1,4 @@
+import { DesktopDownload } from '@/components/desktop-download';
 import { Notice } from '@/components/field';
 import { PageHead } from '@/components/page-head';
 import { Sheets } from '@/components/sheets';
@@ -33,6 +34,13 @@ export default async function CompanyPage({ searchParams }: { searchParams: Prom
         ) : (
           <p className="mt-1 text-muted">Only the owner can connect Google Drive.</p>
         )}
+      </section>
+      <section id="desktop-app" className="mt-8 scroll-mt-28" aria-labelledby="desktop-app-title">
+        <h2 id="desktop-app-title" className="card-title mb-1 text-xl">Windows PC app</h2>
+        <p className="mb-3 max-w-3xl text-muted">
+          One-click setup for Windows 10 and 11 (StudFlow-Setup.exe). Automatically installs the app, sets up the local offline database on the PC, and connects to your A4 and A5 printers.
+        </p>
+        <DesktopDownload />
       </section>
       {company ? (
         <section className="mt-8" aria-label="How your bill looks">

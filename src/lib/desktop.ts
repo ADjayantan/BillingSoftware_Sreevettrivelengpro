@@ -53,3 +53,7 @@ export function printAnswerText(answer: PrintAnswer): string {
 /** The PC app has no speech service of its own; the phone and Chrome do. */
 export const VOICE_IN_PC_APP = 'Voice works in Chrome or on the phone. Type it here.';
 export const VOICE_FAILED = 'Could not listen. Try again, or type it here.';
+
+/** Self-contained Squirrel Windows 10/11 installer (StudFlow-Setup.exe) hosted on GitHub Releases. */
+export const DESKTOP_INSTALLER_URL =
+  'https://github.com/ADjayantan/BillingSoftware_Sreevettrivelengpro/releases/download/v1.0.0/StudFlow-Setup.exe';

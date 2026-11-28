@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { DesktopDownload } from '@/components/desktop-download';
 import { MENU } from '@/components/frame/menu';
 import { Icon } from '@/components/icon';
 import { PageHead } from '@/components/page-head';
@@ -17,7 +18,10 @@ export default function MorePage() {
           </Link>
         ))}
       </div>
-      <div className="mt-4"><SignOut className="btn" /></div>
+      <div className="mt-4 flex flex-wrap gap-2.5">
+        <DesktopDownload />
+        <SignOut className="btn" />
+      </div>
     </>
   );
 }

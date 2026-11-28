@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PRINT_REASONS } from '../desktop/src/policy';
-import { VOICE_FAILED, VOICE_IN_PC_APP, desktopBridge, printAnswerText, readPrintAnswer } from '@/lib/desktop';
+import { DESKTOP_INSTALLER_URL, VOICE_FAILED, VOICE_IN_PC_APP, desktopBridge, printAnswerText, readPrintAnswer } from '@/lib/desktop';
 
 // The page side of the PC app (specs/desktop-app.md, "Printing" and "Voice"): it finds the
 // bridge, reads what a print call answered without trusting it, and says it in easy English.
@@ -61,5 +61,8 @@ describe('the words', () => {
     expect(printAnswerText({ ok: false, reason: 'no-printer' })).toBe('Not printed. This PC has no printer. Add one in Windows settings.');
     expect(VOICE_IN_PC_APP).toBe('Voice works in Chrome or on the phone. Type it here.');
     expect(VOICE_FAILED).toBe('Could not listen. Try again, or type it here.');
+    expect(DESKTOP_INSTALLER_URL).toBe(
+      'https://github.com/ADjayantan/BillingSoftware_Sreevettrivelengpro/releases/download/v1.0.0/StudFlow-Setup.exe',
+    );
   });
 });

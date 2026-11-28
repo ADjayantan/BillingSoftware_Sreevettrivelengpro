@@ -76,6 +76,18 @@ describe('every route', () => {
     expect(refused).toMatchObject({ status: 403, error: { code: 'FORBIDDEN' } });
     expect(refused.error.message).not.toMatch(/row-level|relation|policy|customers/i);
   });
+
+  it('lets signed-in active users download the Windows PC installer (.exe) and blocks strangers', async () => {
+    const { GET } = await import('@/app/api/desktop-installer/route');
+    const { DESKTOP_INSTALLER_URL } = await import('@/lib/desktop');
+    signedIn = false;
+    expect(await call(GET)).toMatchObject({ status: 401, error: { code: 'UNAUTHENTICATED' } });
+    signedIn = true;
+    expect(await call(GET, { as: ACTORS.stranger })).toMatchObject({ status: 403, error: { code: 'FORBIDDEN' } });
+    const res = await GET(new Request('http://localhost/api/desktop-installer'), { params: Promise.resolve({}) });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe(DESKTOP_INSTALLER_URL);
+  });
 });
 
 describe('customers', () => {

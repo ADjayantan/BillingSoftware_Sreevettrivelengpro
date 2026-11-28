@@ -62,6 +62,19 @@ describe('NaN never enters a numeric column', () => {
       ACTORS.owner,
       `insert into public.alert_rules (material_grade, threshold_rs_per_kg, telegram_chat_id) values ('EN8', 5, '1')`,
     );
+    await queryAs(
+      ctx.db,
+      ACTORS.staff,
+      `insert into public.quotes (customer_id, quote_date, valid_until, place_of_supply, customer_snapshot, lines, charges_gst_rate, subtotal, cgst, sgst, grand_total)
+       values ($1, '2026-11-20', '2026-11-30', '33', '{"name":"Murugan"}'::jsonb, '[{"description":"M16 Stud"}]'::jsonb, 18, 1000, 90, 90, 1180)`,
+      [ctx.md.tnCustomerId],
+    );
+    await queryAs(
+      ctx.db,
+      ACTORS.staff,
+      `insert into public.expenses (expense_date, category, description, weight_kg, taxable_amount, gst_amount, total_amount)
+       values ('2026-11-20', 'raw_material', 'EN8 16mm rod', 100, 7500, 1350, 8850)`,
+    );
 
     const { rows: columns } = await ctx.db.query<{ tbl: string; col: string }>(`
       select c.table_name as tbl, c.column_name as col
@@ -255,13 +268,16 @@ describe('GST records are permanent', () => {
       'public.company_profile',
       'public.customers',
       'public.deliveries',
+      'public.expenses',
       'public.invoice_items',
       'public.invoices',
       'public.job_work_ledger',
       'public.job_work_returns',
       'public.metal_rates',
       'public.payments',
+      'public.quotes',
       'public.stud_items',
+      'public.suppliers',
     ]);
   });
 

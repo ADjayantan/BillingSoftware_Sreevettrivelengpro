@@ -20,12 +20,12 @@ try {
     legal_name: 'Sre Vettrivel Engineering Products', tagline: 'Mfrs : Plastic, MS, SS 410, SS 304, Stud & Pump Spares', gstin: '33AAECS2468R1ZS', address: '1 Test Road, Sample Nagar, Coimbatore - 641 001.', factory_address: '2/3, Test Thottam, Sample Nagar, Coimbatore - 641 001.',
     office_phone: '0422 - 1234567', phone: '9000000000', email: 'sample@example.com', bank_name: 'SAMPLE BANK', bank_branch: 'Test Branch', bank_account_no: '000011112222', bank_ifsc: 'DEMO0000001',
   }), 'company');
-  const customer = async (name, phone, credit_days = 30) => {
+  const customer = async (name, phone, gstin = '', credit_days = 30) => {
     const found = ok(await api(`/api/customers?q=${encodeURIComponent(name)}`), 'find').rows[0];
-    return found ?? ok(await api('/api/customers', 'POST', { name, gstin: '', phone, state_code: '33', is_sez: false, credit_days, address: 'SIDCO, Coimbatore', opening_balance: '0', is_active: true }), name);
+    return found ?? ok(await api('/api/customers', 'POST', { name, gstin, phone, state_code: '33', is_sez: false, credit_days, address: 'SIDCO, Coimbatore', opening_balance: '0', is_active: true }), name);
   };
   const people = [];
-  for (const [name, phone] of [['Murugan Engineering Works', ''], ['Bharat Fasteners Pvt Ltd', ''], ['Annai Tools', '9000010001'], ['Marudham Valves', '9000010002'], ['Kongu Pump Works', '9000010003'], ['Siruvani Motors', ''], ['Sri Balaji Fabricators', '9000010005'], ['Noyyal Castings', '9000010006']]) people.push(await customer(name, phone));
+  for (const [name, phone, gstin] of [['Murugan Engineering Works', '', '33AABCM1234F1Z4'], ['Bharat Fasteners Pvt Ltd', '', ''], ['Annai Tools', '9000010001', ''], ['Marudham Valves', '9000010002', ''], ['Kongu Pump Works', '9000010003', ''], ['Siruvani Motors', '', ''], ['Sri Balaji Fabricators', '9000010005', ''], ['Noyyal Castings', '9000010006', '']]) people.push(await customer(name, phone, gstin));
   const product = async (body) => ok(await api('/api/stud-items', 'POST', body), 'product');
   const base = { diameter_mm: null, length_mm: null, thread_type: null, material_grade: null, manual_unit_weight_kg: null, sku_code: '', is_active: true };
   const studs = [
@@ -78,6 +78,26 @@ try {
   ok(await api('/api/job-work', 'POST', { customer_id: people[0].id, party_dc_no: 'KF/8812', party_dc_date: day(9), material_grade: 'SS 410', description: '12 mm rods, 3 m', inward_weight_kg: '500' }), 'lot');
   ok(await api('/api/metal-rates', 'POST', { raw_message: '19/11 rod basic, Rs/kg: M.S round 58.25 | EN-8 84.25 | EN 19 116.50 | s.s.304 210.55' }), 'rates');
   ok(await api('/api/metal-rates', 'POST', { raw_message: '24/11 rod basic, Rs/kg: M.S round 58.25 | EN-8 84.75 | s.s.304 211.75' }), 'rates');
+
+  const quote = async (who, lines, notes) => {
+    const draft = { bill_type: 'supply', customer_id: people[who].id, quote_date: today, valid_until: day(-15), notes, lines, expected_total_paise: 0 };
+    let reply = await api('/api/quotes', 'POST', draft);
+    if (reply.error?.code === 'TOTAL_CHANGED') {
+      const [, rupees, paise] = /₹([\d,]+)\.(\d\d)/.exec(reply.error.message);
+      reply = await api('/api/quotes', 'POST', { ...draft, expected_total_paise: Number(rupees.replace(/,/g, '')) * 100 + Number(paise) });
+    }
+    return ok(reply, 'quote');
+  };
+  await quote(0, [line(a, '400'), line(b, '120')], 'Delivery within 3 days · Ex-works SIDCO Coimbatore');
+  await quote(3, [line(b, '250'), line(d, '500')], 'Special pump shaft batch rate valid for 15 days');
+
+  const sup1 = ok(await api('/api/suppliers', 'POST', { name: 'Coimbatore Bright Steels & Alloys', gstin: '33ABCPV1357D1ZX', phone: '9842211223', category: 'raw_material', notes: 'SS 304, SS 410 & EN8 bright bars' }), 'sup1');
+  const sup2 = ok(await api('/api/suppliers', 'POST', { name: 'Kovai Thread Dies & Tooling', gstin: '', phone: '9842299887', category: 'tools', notes: 'Thread rolling dies & cutting oil' }), 'sup2');
+  ok(await api('/api/expenses', 'POST', { expense_date: day(4), category: 'raw_material', supplier_id: sup1.id, supplier_name: sup1.name, bill_no: 'CBS/26-27/418', description: 'SS 304 12mm bright rod bundle', material_grade: 'SS 304', weight_kg: '320', taxable_amount: '67200.00', gst_amount: '12096.00', payment_mode: 'bank_transfer', payment_status: 'paid' }), 'exp1');
+  ok(await api('/api/expenses', 'POST', { expense_date: day(2), category: 'raw_material', supplier_id: sup1.id, supplier_name: sup1.name, bill_no: 'CBS/26-27/439', description: 'SS 410 16mm pump shaft rods', material_grade: 'SS 410', weight_kg: '210', taxable_amount: '31500.00', gst_amount: '5670.00', payment_mode: 'credit', payment_status: 'unpaid' }), 'exp2');
+  ok(await api('/api/expenses', 'POST', { expense_date: day(1), category: 'tools', supplier_id: sup2.id, supplier_name: sup2.name, bill_no: 'KTD/882', description: 'M12 × 1.75 thread rolling die set & coolant oil', taxable_amount: '8500.00', gst_amount: '1530.00', payment_mode: 'upi', payment_status: 'paid' }), 'exp3');
+  ok(await api('/api/expenses', 'POST', { expense_date: today, category: 'electricity', supplier_name: 'TANGEDCO (TNEB)', bill_no: 'EB-11/2026', description: 'Factory 3-phase electricity bill', taxable_amount: '14200.00', gst_amount: '0', payment_mode: 'bank_transfer', payment_status: 'paid' }), 'exp4');
+
   console.log('filled:', (await sql('select count(*)::int as n from public.invoices'))[0].n, 'bills');
 } finally {
   page.close();

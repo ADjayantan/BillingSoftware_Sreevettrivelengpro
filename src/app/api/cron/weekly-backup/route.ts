@@ -73,6 +73,27 @@ const BACKUP_TABLES: ReadonlyArray<{
     name: 'payments',
     columns: ['id', 'invoice_id', 'client_receipt_id', 'amount', 'received_on', 'mode', 'reference', 'settles_invoice', 'voided_at', 'void_reason', 'created_by', 'created_at', 'updated_at'],
   },
+  {
+    name: 'quotes',
+    columns: [
+      'id', 'quote_no', 'bill_type', 'customer_id', 'quote_date', 'valid_until', 'place_of_supply', 'is_sez',
+      'customer_snapshot', 'lines', 'packing_charge', 'delivery_charge', 'freight_paid_by', 'delivery_taxable',
+      'charges_gst_rate', 'subtotal', 'cgst', 'sgst', 'igst', 'round_off', 'grand_total', 'notes', 'status',
+      'converted_invoice_id', 'converted_invoice_no', 'created_by', 'created_at', 'updated_at',
+    ],
+  },
+  {
+    name: 'suppliers',
+    columns: ['id', 'name', 'gstin', 'phone', 'category', 'notes', 'is_active', 'created_at', 'updated_at'],
+  },
+  {
+    name: 'expenses',
+    columns: [
+      'id', 'expense_date', 'category', 'supplier_id', 'supplier_name', 'bill_no', 'description',
+      'material_grade', 'weight_kg', 'taxable_amount', 'gst_amount', 'total_amount', 'payment_mode',
+      'payment_status', 'created_by', 'created_at', 'updated_at',
+    ],
+  },
 ];
 
 /**

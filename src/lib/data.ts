@@ -7,8 +7,10 @@ import { typedProductNo } from '@/lib/products';
 import { bookMonthRow, type BookMonthRow } from '@/lib/schemas/books';
 import { PAGE_SIZE } from '@/lib/schemas/common';
 import * as h from '@/lib/schemas/home';
+import * as exp from '@/lib/schemas/expenses';
 import * as inv from '@/lib/schemas/invoices';
 import * as m from '@/lib/schemas/masters';
+import * as q from '@/lib/schemas/quotes';
 
 /*
  * Reads, shared by pages and route handlers. Numerics are cast to text: PostgREST would send
@@ -31,6 +33,11 @@ export const DELIVERY_COLUMNS =
 const RETURN_COLUMNS =
   'line_no,party_dc_no,party_dc_date,material_grade,goods_description,goods_hsn,pieces,returned_weight_kg::text,scrap_weight_kg::text,inward_weight_kg::text,balance_after_kg::text,declared_value::text';
 const PAYMENT_COLUMNS = 'id,amount::text,received_on,mode,reference,settles_invoice,voided_at,void_reason';
+export const QUOTE_COLUMNS =
+  'id,quote_no,bill_type,customer_id,quote_date,valid_until,place_of_supply,is_sez,customer_snapshot,lines,packing_charge::text,delivery_charge::text,freight_paid_by,delivery_taxable,charges_gst_rate::text,subtotal::text,cgst::text,sgst::text,igst::text,round_off::text,grand_total::text,notes,status,converted_invoice_id,converted_invoice_no';
+export const SUPPLIER_COLUMNS = 'id,name,gstin,phone,category,notes,is_active';
+export const EXPENSE_COLUMNS =
+  'id,expense_date,category,supplier_id,supplier_name,bill_no,description,material_grade,weight_kg::text,taxable_amount::text,gst_amount::text,total_amount::text,payment_mode,payment_status';
 
 export interface Page<T> {
   rows: T[];
@@ -199,4 +206,34 @@ export function studRecord(input: z.output<typeof m.studItemInput>): Record<stri
     unit_weight_kg: manual_unit_weight_kg ?? (input.diameter_mm === null ? null : weightForPieces(input, 1)),
     unit_weight_is_manual: manual_unit_weight_kg !== null,
   };
+}
+
+export async function listQuotes(db: SupabaseClient, status?: 'open' | 'converted' | 'cancelled', limit = 50): Promise<q.QuoteRow[]> {
+  let req = db.from('quotes').select(QUOTE_COLUMNS).order('quote_date', { ascending: false }).order('quote_no', { ascending: false }).limit(limit);
+  if (status) req = req.eq('status', status);
+  return parseRow(z.array(q.quoteRow), must(await req));
+}
+
+export async function getQuote(db: SupabaseClient, quoteId: string): Promise<q.QuoteRow> {
+  const rows = must(await db.from('quotes').select(QUOTE_COLUMNS).eq('id', quoteId).limit(1));
+  const [found] = parseRow(z.array(q.quoteRow), rows);
+  if (found === undefined) throw new ApiError(404, 'NOT_FOUND', 'Quotation not found');
+  return found;
+}
+
+export async function listSuppliers(db: SupabaseClient): Promise<exp.SupplierRow[]> {
+  const rows = must(await db.from('suppliers').select(SUPPLIER_COLUMNS).eq('is_active', true).order('name').limit(200));
+  return parseRow(z.array(exp.supplierRow), rows);
+}
+
+export async function listExpenses(db: SupabaseClient, month?: string, limit = 100): Promise<exp.ExpenseRow[]> {
+  let req = db.from('expenses').select(EXPENSE_COLUMNS).order('expense_date', { ascending: false }).order('created_at', { ascending: false }).limit(limit);
+  if (month && /^\d{4}-\d{2}$/.test(month)) {
+    const start = `${month}-01`;
+    const next = new Date(`${start}T00:00:00Z`);
+    next.setUTCMonth(next.getUTCMonth() + 1, 0);
+    const end = next.toISOString().slice(0, 10);
+    req = req.gte('expense_date', start).lte('expense_date', end);
+  }
+  return parseRow(z.array(exp.expenseRow), must(await req));
 }

@@ -552,3 +552,169 @@ describe('billing', () => {
     ).toMatchObject({ status: 422, error: { message: expect.stringMatching(/already received/i) } });
   });
 });
+
+describe('quotations, GSTR-1 auditor exports, and expenses & suppliers', () => {
+  it('creates a quotation, converts it to a tax invoice in 1 click (idempotently), and handles cancellation', async () => {
+    const quotesRoute = await import('@/app/api/quotes/route');
+    const oneQuote = await import('@/app/api/quotes/[id]/route');
+    const convertRoute = await import('@/app/api/quotes/[id]/convert/route');
+
+    const quoteBody = {
+      bill_type: 'supply',
+      customer_id: md.tnCustomerId,
+      quote_date: '2026-11-20',
+      valid_until: '2026-12-05',
+      notes: 'Delivery in 3 days',
+      lines: [
+        {
+          stud_item_id: md.studItemId,
+          description: 'EN8 M16x125 Studs',
+          hsn_sac: '731815',
+          billing_unit: 'pcs',
+          quantity: '100',
+          pieces: null,
+          weight_kg: '19.728730',
+          rate: '15',
+          gst_rate: '18',
+        },
+      ],
+      expected_total_paise: 177_000,
+    };
+
+    // Wrong expected_total_paise -> 409 TOTAL_CHANGED
+    expect(await call(quotesRoute.POST, { json: { ...quoteBody, expected_total_paise: 100 } })).toMatchObject({
+      status: 409,
+      error: { code: 'TOTAL_CHANGED' },
+    });
+
+    const created = await call(quotesRoute.POST, { json: quoteBody });
+    expect(created).toMatchObject({
+      status: 201,
+      data: {
+        customer_id: md.tnCustomerId,
+        grand_total: '1770.00',
+        status: 'open',
+      },
+    });
+    const quoteId = created.data.id as string;
+
+    // 1-Click Convert to Tax Invoice
+    const converted = await call(convertRoute.POST, { method: 'POST', params: { id: quoteId } });
+    expect(converted).toMatchObject({
+      status: 201,
+      data: {
+        invoice_no: expect.stringMatching(/^INV\/26-27\/\d{4}$/),
+        dc_no: expect.stringMatching(/^DC\/26-27\/\d{4}$/),
+      },
+    });
+
+    // Clicking convert a second time is idempotent and returns the same invoice
+    const replayed = await call(convertRoute.POST, { method: 'POST', params: { id: quoteId } });
+    expect(replayed.data.invoice_id).toBe(converted.data.invoice_id);
+    expect(replayed.data.replayed).toBe(true);
+
+    // Converted quote cannot be cancelled
+    expect(await call(oneQuote.PATCH, { method: 'PATCH', params: { id: quoteId }, json: { status: 'cancelled' } })).toMatchObject({
+      status: 409,
+    });
+
+    // Create a second quote, cancel it, and verify converting a cancelled quote is refused with 422
+    const second = await call(quotesRoute.POST, { json: quoteBody });
+    const secondId = second.data.id as string;
+    expect(
+      await call(oneQuote.PATCH, { method: 'PATCH', params: { id: secondId }, json: { status: 'cancelled' } }),
+    ).toMatchObject({ status: 200, data: { status: 'cancelled' } });
+    expect(await call(convertRoute.POST, { method: 'POST', params: { id: secondId } })).toMatchObject({
+      status: 422,
+    });
+  });
+
+  it('builds GSTR-1 report and exports GST Portal JSON and Auditor CSV', async () => {
+    const gstr1Route = await import('@/app/api/gstr1/route');
+    const report = await call(gstr1Route.GET, { search: '?month=2026-11' });
+    expect(report.status).toBe(200);
+    expect(report.data).toMatchObject({
+      month: '2026-11',
+      fp: '112026',
+      totals: {
+        activeInvoices: expect.any(Number),
+      },
+    });
+
+    const jsonRes = await gstr1Route.GET(new Request('http://localhost/api/gstr1?month=2026-11&format=json'), {
+      params: Promise.resolve({}),
+    });
+    expect(jsonRes.status).toBe(200);
+    expect(jsonRes.headers.get('content-disposition')).toContain('112026.json');
+    const portalPayload = (await jsonRes.json()) as { fp: string; b2b: unknown[]; hsn: { data: unknown[] } };
+    expect(portalPayload.fp).toBe('112026');
+    expect(Array.isArray(portalPayload.b2b)).toBe(true);
+    expect(Array.isArray(portalPayload.hsn.data)).toBe(true);
+
+    const csvRes = await gstr1Route.GET(new Request('http://localhost/api/gstr1?month=2026-11&format=csv'), {
+      params: Promise.resolve({}),
+    });
+    expect(csvRes.status).toBe(200);
+    expect(csvRes.headers.get('content-disposition')).toContain('GSTR1_Auditor_Summary_2026-11.csv');
+    const csvText = await csvRes.text();
+    expect(csvText).toContain('2. B2B INVOICES');
+    expect(csvText).toContain('4. HSN / SAC SUMMARY');
+    expect(csvText).toContain('5. DOCUMENTS ISSUED SUMMARY');
+  });
+
+  it('records suppliers and shop / raw-material expenses and marks unpaid bills paid', async () => {
+    const suppliersRoute = await import('@/app/api/suppliers/route');
+    const expensesRoute = await import('@/app/api/expenses/route');
+    const oneExpense = await import('@/app/api/expenses/[id]/route');
+
+    const sup = await call(suppliersRoute.POST, {
+      json: {
+        name: 'Coimbatore Bright Steels',
+        gstin: GSTIN.tn,
+        phone: '9842211223',
+        category: 'raw_material',
+        notes: 'SS 304 and EN8 rods',
+      },
+    });
+    expect(sup).toMatchObject({ status: 201, data: { name: 'Coimbatore Bright Steels', category: 'raw_material' } });
+    const supplierId = sup.data.id as string;
+
+    const exp = await call(expensesRoute.POST, {
+      json: {
+        expense_date: '2026-11-20',
+        category: 'raw_material',
+        supplier_id: supplierId,
+        supplier_name: 'Coimbatore Bright Steels',
+        bill_no: 'CBS/26-27/412',
+        description: 'SS 304 12mm bright rod bundle',
+        material_grade: 'SS 304',
+        weight_kg: '250',
+        taxable_amount: '52500.00',
+        gst_amount: '9450.00',
+        payment_mode: 'credit',
+        payment_status: 'unpaid',
+      },
+    });
+    expect(exp).toMatchObject({
+      status: 201,
+      data: {
+        total_amount: '61950.00',
+        payment_status: 'unpaid',
+      },
+    });
+    const expenseId = exp.data.id as string;
+
+    const paid = await call(oneExpense.PATCH, {
+      method: 'PATCH',
+      params: { id: expenseId },
+      json: { payment_status: 'paid', payment_mode: 'bank_transfer' },
+    });
+    expect(paid).toMatchObject({
+      status: 200,
+      data: { payment_status: 'paid', payment_mode: 'bank_transfer' },
+    });
+
+    const list = await call(expensesRoute.GET, { search: '?month=2026-11' });
+    expect((list.data as unknown as unknown[]).length).toBeGreaterThanOrEqual(1);
+  });
+});

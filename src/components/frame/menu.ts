@@ -17,6 +17,7 @@ export const MENU: readonly MenuGroup[] = [
     head: 'Sales',
     entries: [
       { href: '/invoices', label: 'Bills', icon: 'bill' },
+      { href: '/quotes', label: 'Quotes', icon: 'edit' },
       { href: '/customers', label: 'Customers', icon: 'users' },
       { href: '/money', label: 'Money received', icon: 'wallet' },
     ],
@@ -33,7 +34,9 @@ export const MENU: readonly MenuGroup[] = [
   {
     head: 'Office',
     entries: [
-      { href: '/books', label: 'Excel books', icon: 'sheet' },
+      { href: '/expenses', label: 'Expenses', icon: 'coin' },
+      { href: '/gstr1', label: 'GSTR-1', icon: 'sheet' },
+      { href: '/books', label: 'Excel books', icon: 'drive' },
       { href: '/company', label: 'Company', icon: 'building' },
     ],
   },
@@ -45,6 +48,7 @@ export const MAKE: readonly MenuGroup[] = [
     head: 'Sale',
     entries: [
       { href: '/billing', label: 'Bill', icon: 'bill' },
+      { href: '/quotes?new', label: 'Quotation', icon: 'edit' },
       { href: '/money', label: 'Money received', icon: 'wallet' },
       { href: '/customers?new', label: 'Customer', icon: 'users' },
     ],
@@ -54,6 +58,7 @@ export const MAKE: readonly MenuGroup[] = [
     entries: [
       { href: '/stud-master?new', label: 'Product', icon: 'box' },
       { href: '/job-work?new', label: 'Job work in', icon: 'work' },
+      { href: '/expenses?new', label: 'Expense', icon: 'coin' },
     ],
   },
 ];

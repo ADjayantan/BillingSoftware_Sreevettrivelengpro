@@ -27,13 +27,16 @@ const PUBLIC_TABLES = [
   'company_profile',
   'customers',
   'deliveries',
+  'expenses',
   'invoice_items',
   'invoices',
   'job_work_ledger',
   'job_work_returns',
   'metal_rates',
   'payments',
+  'quotes',
   'stud_items',
+  'suppliers',
 ] as const;
 
 const seqOf = (documentNo: string): number => Number(documentNo.split('/')[2]);

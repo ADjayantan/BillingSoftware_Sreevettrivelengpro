@@ -181,7 +181,7 @@ export function EditBill({ doc }: { doc: InvoiceDocument }) {
               const blank = f.isBlank(line);
               const named = (name: string): string => `${name}, edit line ${i + 1}`;
               return (
-                <div key={line.key} className="grid grid-cols-6 items-start gap-2 border-t border-line pt-2.5 sm:grid-cols-[minmax(0,1fr)_5.2rem_4.4rem_6rem_5rem_6.4rem_2.2rem]">
+                <div key={line.key} className="grid grid-cols-6 items-start gap-2 border-t border-line pt-2.5 sm:grid-cols-[minmax(0,1fr)_5.2rem_4.4rem_6rem_5.6rem_4.6rem_6.4rem_2.2rem]">
                   <div className="col-span-5 sm:col-span-1">
                     <span className="mb-1 block text-[12.5px] font-semibold text-muted sm:hidden">Product</span>
                     <Typeahead
@@ -207,14 +207,18 @@ export function EditBill({ doc }: { doc: InvoiceDocument }) {
                     <span className="mb-1 block text-[12.5px] font-semibold text-muted sm:hidden">Rate ₹</span>
                     <input aria-label={named('Rate ₹')} placeholder="Rate" className="field num px-2" inputMode="decimal" value={line.rate} onChange={(event) => patchLine(line.key, (old) => ({ ...old, rate: event.target.value.trim() }))} />
                   </div>
-                  <div className="col-span-3 sm:col-span-1">
+                  <div className="col-span-2 sm:col-span-1">
+                    <span className="mb-1 block text-[12.5px] font-semibold text-muted sm:hidden">HSN</span>
+                    <input aria-label={named('HSN/SAC')} data-enter-skip placeholder="HSN" className="field px-2" inputMode="numeric" value={line.hsn} onChange={(event) => patchLine(line.key, (old) => ({ ...old, hsn: event.target.value.trim() }))} />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
                     <span className="mb-1 block text-[12.5px] font-semibold text-muted sm:hidden">GST %</span>
                     <input aria-label={named('GST %')} placeholder="GST %" className="field num px-2" inputMode="decimal" value={line.gst} onChange={(event) => patchLine(line.key, (old) => f.typeGst(old, event.target.value))} />
                   </div>
-                  <div className="col-span-3 flex min-h-11.5 items-center justify-end sm:col-span-1">
+                  <div className="col-span-2 flex min-h-11.5 items-center justify-end sm:col-span-1">
                     <output aria-label={named('Amount')} className="num text-[16px] font-semibold">{computed ? formatPaise(computed.line_total_paise) : ''}</output>
                   </div>
-                  <div className="col-start-6 row-start-1 sm:col-start-7">
+                  <div className="col-start-6 row-start-1 sm:col-start-8">
                     {blank ? null : (
                       <button type="button" aria-label={`Remove edit line ${i + 1}`} className="grid min-h-11.5 w-full cursor-pointer place-items-center rounded-lg text-muted hover:bg-warn-bg hover:text-warn" onClick={() => setForm((old) => ({ ...old, lines: f.withTrailingBlank(old.lines.filter((other_) => other_.key !== line.key), old.type) }))}>✕</button>
                     )}

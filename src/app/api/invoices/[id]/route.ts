@@ -13,7 +13,11 @@ const ARCHIVE_MS = 30_000;
 
 function filesLater(supabase: SupabaseClient, invoiceId: string): void {
   booksLater({
-    first: () => Promise.race([triggerInvoiceArchiveAsync(supabase, invoiceId), new Promise((resolve) => setTimeout(resolve, ARCHIVE_MS).unref())]),
+    first: () =>
+      Promise.race([
+        triggerInvoiceArchiveAsync(supabase, invoiceId, { replaceExisting: true }),
+        new Promise((resolve) => setTimeout(resolve, ARCHIVE_MS).unref()),
+      ]),
   });
 }
 

@@ -106,7 +106,7 @@ class FakeGoogleDrive {
       const jsonEnd = metaPart.lastIndexOf('}');
       const meta = JSON.parse(metaPart.slice(jsonStart, jsonEnd + 1)) as {
         name: string;
-        parents: string[];
+        parents?: string[];
       };
 
       const filePart = parts[2] ?? '';
@@ -114,8 +114,22 @@ class FakeGoogleDrive {
       const bodyLatin1 = filePart.slice(headerEnd + 4, filePart.endsWith('\r\n') ? -2 : undefined);
       const fileBytes = Buffer.from(bodyLatin1, 'latin1');
 
+      const patchId = /\/files\/([A-Za-z0-9_-]+)$/.exec(url.pathname)?.[1];
+      if (init?.method === 'PATCH' && patchId) {
+        const existing = this.nodes.get(patchId);
+        if (!existing) return new Response('Not found', { status: 404 });
+        existing.bytes = fileBytes;
+        if (meta.name) existing.name = meta.name;
+        return Response.json({
+          id: existing.id,
+          name: existing.name,
+          parents: [existing.parentId],
+          webViewLink: existing.webViewLink,
+        });
+      }
+
       const id = `driveFile_${++this.seq}`;
-      const parentId = meta.parents[0] ?? '';
+      const parentId = meta.parents?.[0] ?? '';
       const webViewLink = `https://drive.google.com/file/d/${id}/view`;
       const node: FakeDriveNode = {
         id,
@@ -316,6 +330,44 @@ describe('Task B — Isolated Google Drive Vault & Weekly Disaster Backup', () =
     expect(secondRun.dcPdf?.alreadyExisted).toBe(true);
     expect(secondRun.invoicePdf?.fileId).toBe(archived.invoicePdf?.fileId);
     expect(fakeDrive.uploadCalls).toBe(uploadsBefore);
+
+    // 2b. When an invoice is edited in place (replaceExisting: true), the existing Drive PDF is updated in place (same fileId, new bytes)
+    await syncInvoice(db, ACTORS.staff, {
+      ...intraStatePayload(md, {
+        subtotal: '3000.00',
+        cgst: '270.00',
+        sgst: '270.00',
+        grand_total: '3540.00',
+        items: [
+          {
+            line_no: 1,
+            stud_item_id: md.studItemId,
+            description: 'EN8 M16x125 Studs',
+            hsn_sac: '731815',
+            qty_pieces: 200,
+            total_weight_kg: '39.457460',
+            billing_unit: 'pcs',
+            unit_rate: '15.00',
+            tax_rate_percent: '18.00',
+            line_total: '3000.00',
+            cgst_amount: '270.00',
+            sgst_amount: '270.00',
+            igst_amount: '0.00',
+          },
+        ],
+      }),
+      edit_invoice_id: supplyIssued.invoice_id,
+    });
+    const replaced = await archiveInvoiceById(supabaseService, supplyIssued.invoice_id, {
+      creds: TEST_CREDS,
+      fetchImpl: fakeDrive.fetch,
+      replaceExisting: true,
+    });
+    expect(replaced.synced).toBe(true);
+    expect(replaced.invoicePdf?.fileId).toBe(archived.invoicePdf?.fileId);
+    const updatedPdfText = fakeDrive.nodes.get(archived.invoicePdf!.fileId)?.bytes?.toString('utf8') ?? '';
+    expect(updatedPdfText).toContain('(3,540)');
+    expect(updatedPdfText).toContain('(200 PCS)');
 
     // 3. Job-work bill routes to Job_Work_Bills/
     const jobWorkIssued = await syncInvoice(

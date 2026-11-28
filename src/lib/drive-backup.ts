@@ -576,34 +576,34 @@ export async function uploadFileToVaultFolder(params: {
   const { folderId, folderPath } = await ensureVaultFolderPath(folderSegments, creds, token, fetchImpl);
   assertInsideVault(folderId, creds.rootFolderId);
 
-  if (preventOverwrite) {
-    const existing = await findExistingFileInFolder(fileName, folderId, creds, token, fetchImpl);
-    if (existing) {
-      return {
-        fileId: existing.id,
-        fileName: existing.name,
-        folderId,
-        folderPath,
-        webViewLink: existing.webViewLink,
-        alreadyExisted: true,
-      };
-    }
+  const existing = await findExistingFileInFolder(fileName, folderId, creds, token, fetchImpl);
+  if (existing && preventOverwrite) {
+    return {
+      fileId: existing.id,
+      fileName: existing.name,
+      folderId,
+      folderPath,
+      webViewLink: existing.webViewLink,
+      alreadyExisted: true,
+    };
   }
 
   const boundary = `studflow_vault_${createHash('sha256').update(fileName).digest('hex').slice(0, 16)}`;
+  const metadata = existing ? { name: fileName } : { name: fileName, parents: [folderId] };
   const metadataPart = Buffer.from(
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({
-      name: fileName,
-      parents: [folderId],
-    })}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`,
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(
+      metadata,
+    )}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`,
     'utf8',
   );
   const closingPart = Buffer.from(`\r\n--${boundary}--`, 'utf8');
   const multipartBody = Buffer.concat([metadataPart, Buffer.from(bytes), closingPart]);
 
-  const uploadUrl = `${DRIVE_UPLOAD_API}?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,parents`;
+  const uploadUrl = existing
+    ? `${DRIVE_UPLOAD_API}/${encodeURIComponent(existing.id)}?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,parents`
+    : `${DRIVE_UPLOAD_API}?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,parents`;
   const res = await fetchImpl(uploadUrl, {
-    method: 'POST',
+    method: existing ? 'PATCH' : 'POST',
     headers: {
       authorization: `Bearer ${token}`,
       'content-type': `multipart/related; boundary=${boundary}`,
@@ -643,9 +643,10 @@ export async function uploadFileToVaultFolder(params: {
 export async function archiveInvoiceDocumentToDrive(
   db: SupabaseClient,
   doc: InvoiceDocument,
-  options: { creds?: DriveCredentials; fetchImpl?: typeof fetch } = {},
+  options: { creds?: DriveCredentials; fetchImpl?: typeof fetch; replaceExisting?: boolean } = {},
 ): Promise<InvoiceArchiveResult> {
   const { invoice, delivery } = doc;
+  const preventOverwrite = !options.replaceExisting;
   try {
     const creds = await signIn(options.creds);
     const fetchImpl = options.fetchImpl ?? fetch;
@@ -662,7 +663,7 @@ export async function archiveInvoiceDocumentToDrive(
       fileName: invoiceFileName,
       mimeType: 'application/pdf',
       bytes: invoicePdfBytes,
-      preventOverwrite: true,
+      preventOverwrite,
       creds,
       fetchImpl,
     });
@@ -679,7 +680,7 @@ export async function archiveInvoiceDocumentToDrive(
           fileName: dcFileName,
           mimeType: 'application/pdf',
           bytes: dcPdfBytes,
-          preventOverwrite: true,
+          preventOverwrite,
           creds,
           fetchImpl,
         });
@@ -738,7 +739,7 @@ export async function archiveInvoiceDocumentToDrive(
 export async function archiveInvoiceById(
   db: SupabaseClient,
   invoiceId: string,
-  options: { creds?: DriveCredentials; fetchImpl?: typeof fetch } = {},
+  options: { creds?: DriveCredentials; fetchImpl?: typeof fetch; replaceExisting?: boolean } = {},
 ): Promise<InvoiceArchiveResult> {
   const doc = await getInvoice(db, invoiceId);
   return archiveInvoiceDocumentToDrive(db, doc, options);
@@ -752,7 +753,7 @@ export async function archiveInvoiceById(
 export function triggerInvoiceArchiveAsync(
   db: SupabaseClient,
   invoiceId: string,
-  options: { creds?: DriveCredentials; fetchImpl?: typeof fetch } = {},
+  options: { creds?: DriveCredentials; fetchImpl?: typeof fetch; replaceExisting?: boolean } = {},
 ): Promise<InvoiceArchiveResult | null> {
   return (async () => {
     // Not set up at all: nothing to try. A link to be made again is tried, and the bill waits.
@@ -771,7 +772,7 @@ export async function retryPendingDriveArchives(
   const limit = options.limit ?? 25;
   const { data, error } = await db
     .from('invoices')
-    .select('id')
+    .select('id,drive_file_id')
     .eq('drive_sync_pending', true)
     .is('cancelled_at', null)
     .order('created_at', { ascending: true })
@@ -781,12 +782,15 @@ export async function retryPendingDriveArchives(
     throw new Error('Could not query pending Drive archives.');
   }
 
-  const rows = z.array(z.object({ id: z.uuid() })).parse(data ?? []);
+  const rows = z.array(z.object({ id: z.uuid(), drive_file_id: z.string().nullable().optional() })).parse(data ?? []);
   const results: InvoiceArchiveResult[] = [];
   let succeeded = 0;
 
   for (const row of rows) {
-    const res = await archiveInvoiceById(db, row.id, options);
+    const res = await archiveInvoiceById(db, row.id, {
+      ...options,
+      replaceExisting: Boolean(row.drive_file_id),
+    });
     results.push(res);
     if (res.synced) succeeded += 1;
   }
